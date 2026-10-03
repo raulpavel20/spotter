@@ -428,7 +428,7 @@ impl App {
                         self.toast = None;
                     }
                 }
-                if self.watch != WatchStatus::Live && self.ticks % POLL_TICKS == 0 {
+                if self.watch != WatchStatus::Live && self.ticks.is_multiple_of(POLL_TICKS) {
                     return vec![self.refresh(RefreshKind::Full)];
                 }
                 Vec::new()
@@ -590,7 +590,7 @@ impl App {
         }]
     }
 
-    /// Selection stability (PLAN §6.5): same target, else same subject and
+    /// Selection stability: same target, else same subject and
     /// author, else same position, clamped.
     fn relocate(
         &self,
@@ -1040,10 +1040,10 @@ impl App {
                     KeyCode::Char('G') | KeyCode::End => self.file_sel = last,
                     KeyCode::Left | KeyCode::Char('h') => self.focus = Focus::Timeline,
                     KeyCode::Enter => {
-                        if let Some(id) = self.selected() {
-                            if files_len > 0 {
-                                return self.open_diff(id, Some(self.file_sel));
-                            }
+                        if let Some(id) = self.selected()
+                            && files_len > 0
+                        {
+                            return self.open_diff(id, Some(self.file_sel));
                         }
                     }
                     KeyCode::Char(' ') => {

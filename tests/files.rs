@@ -1,4 +1,4 @@
-//! File lists and patches for every target (PLAN §3, §6.4).
+//! File lists and patches for every target.
 
 mod common;
 

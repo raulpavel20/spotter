@@ -101,6 +101,54 @@ fn merge(s: &str, spans: Vec<(usize, usize)>) -> Spans {
     out.into_iter().map(|(a, b)| (a as u32, b as u32)).collect()
 }
 
+/// Larger change blocks are paired in order, without searching.
+const MAX_ALIGN: usize = 64;
+
+/// Distinct non-whitespace tokens of a line.
+fn token_set(text: &[u8]) -> std::collections::HashSet<&str> {
+    let Ok(s) = std::str::from_utf8(text) else {
+        return Default::default();
+    };
+    tokens(s)
+        .into_iter()
+        .map(|(a, b)| &s[a..b])
+        .filter(|t| !t.trim().is_empty())
+        .collect()
+}
+
+/// Jaccard similarity of two lines' token sets.
+fn similarity(a: &std::collections::HashSet<&str>, b: &std::collections::HashSet<&str>) -> f64 {
+    let union = a.union(b).count();
+    if union == 0 {
+        return 0.0;
+    }
+    a.intersection(b).count() as f64 / union as f64
+}
+
+/// Pairs each deleted line with its most similar added line, keeping
+/// order (each pick comes after the previous one), so an inserted line
+/// doesn't shift every pairing after it.
+fn align(lines: &[Line], dels: &[usize], adds: &[usize]) -> Vec<(usize, usize)> {
+    if dels.len() > MAX_ALIGN || adds.len() > MAX_ALIGN {
+        return dels.iter().copied().zip(adds.iter().copied()).collect();
+    }
+    let add_sets: Vec<_> = adds.iter().map(|&a| token_set(&lines[a].text)).collect();
+    let mut out = Vec::new();
+    let mut next = 0;
+    for &d in dels {
+        let ds = token_set(&lines[d].text);
+        let best = (next..adds.len())
+            .map(|j| (j, similarity(&ds, &add_sets[j])))
+            .filter(|&(_, sim)| sim >= 0.3)
+            .max_by(|a, b| a.1.total_cmp(&b.1).then(b.0.cmp(&a.0)));
+        if let Some((j, _)) = best {
+            out.push((d, adds[j]));
+            next = j + 1;
+        }
+    }
+    out
+}
+
 /// Fills `Line::emph` for every hunk of the patch.
 pub fn annotate(p: &mut FilePatch) {
     for hunk in &mut p.hunks {
@@ -131,7 +179,7 @@ fn annotate_lines(lines: &mut [Line]) {
             }
             i += 1;
         }
-        for (&d, &a) in dels.iter().zip(&adds) {
+        for (d, a) in align(lines, &dels, &adds) {
             if let Some((o, nw)) = pair(&lines[d].text, &lines[a].text) {
                 lines[d].emph = o;
                 lines[a].emph = nw;
@@ -212,6 +260,31 @@ mod tests {
         assert_eq!(show(&t(3), &l[3].emph), ["quantity"]);
         assert_eq!(show(&t(4), &l[4].emph), [", currency"]);
         assert!(l[5].emph.is_empty());
+    }
+
+    #[test]
+    fn pairs_each_deletion_with_its_best_match() {
+        // A new function was inserted before the changed signature.
+        let patch = "diff --git a/p.py b/p.py
+--- a/p.py
++++ b/p.py
+@@ -1,2 +1,5 @@
+-def cart_total(lines: list) -> Decimal:
+-    return round(total, 2)
++def apply_discount(total: Decimal, percent: int) -> Decimal:
++    return total * percent
++def cart_total(lines: list, percent: int = 0) -> Decimal:
++    return round(apply_discount(total, percent), 2)
+";
+        let mut p = parse_patch(patch.as_bytes()).remove(0);
+        annotate(&mut p);
+        let l = &p.hunks[0].lines;
+        let t = |i: usize| l[i].text.to_string();
+        // Not paired with the unrelated apply_discount signature…
+        assert!(l[2].emph.is_empty(), "{:?}", show(&t(2), &l[2].emph));
+        // …but with the cart_total line that really changed.
+        assert_eq!(show(&t(4), &l[4].emph), [", percent: int = 0"]);
+        assert_eq!(show(&t(5), &l[5].emph), ["apply_discount(", "percent), "]);
     }
 
     #[test]

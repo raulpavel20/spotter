@@ -1,4 +1,4 @@
-//! Base branch, merge-base and trunk-mode resolution (PLAN §6.1).
+//! Base branch, merge-base and trunk-mode resolution.
 
 use bstr::ByteSlice;
 
@@ -143,13 +143,13 @@ fn default_branch(git: &Git) -> Result<Option<DefaultBranch>, GitError> {
     };
     if let Some(r) = &remote {
         let head = format!("refs/remotes/{r}/HEAD");
-        if let Some(target) = symbolic_ref(git, &head)? {
-            if let Some(name) = target.strip_prefix(&format!("refs/remotes/{r}/")) {
-                return Ok(Some(DefaultBranch {
-                    name: name.to_owned(),
-                    remote,
-                }));
-            }
+        if let Some(target) = symbolic_ref(git, &head)?
+            && let Some(name) = target.strip_prefix(&format!("refs/remotes/{r}/"))
+        {
+            return Ok(Some(DefaultBranch {
+                name: name.to_owned(),
+                remote,
+            }));
         }
     }
     for name in ["main", "master"] {
@@ -196,7 +196,7 @@ fn fmt_count(n: usize) -> String {
     let s = n.to_string();
     let mut out = String::new();
     for (i, c) in s.chars().enumerate() {
-        if i > 0 && (s.len() - i) % 3 == 0 {
+        if i > 0 && (s.len() - i).is_multiple_of(3) {
             out.push(',');
         }
         out.push(c);
@@ -270,33 +270,33 @@ pub fn resolve(git: &Git, opts: &BaseOptions<'_>) -> Result<BaseInfo, GitError> 
     let default = default_branch(git)?;
 
     // 3. Trunk mode.
-    if let (Some(d), Some(b)) = (&default, &branch) {
-        if &d.name == b {
-            let branch_ref = branch_ref.as_deref().unwrap_or_default();
-            if let Some(up) = upstream_of(git, branch_ref)? {
-                info.mode = BaseMode::TrunkUpstream;
-                info.base_ref = Some(short(&up).to_owned());
-                if against(git, &mut info, &up, opts)? {
-                    info.notes.push(format!(
-                        "trunk mode · unpushed commits ({}..HEAD)",
-                        short(&up)
-                    ));
-                    if info.count == 0 {
-                        info.hint =
-                            Some("nothing unpushed · --base HEAD~10 to look further back".into());
-                    }
-                    return Ok(info);
+    if let (Some(d), Some(b)) = (&default, &branch)
+        && &d.name == b
+    {
+        let branch_ref = branch_ref.as_deref().unwrap_or_default();
+        if let Some(up) = upstream_of(git, branch_ref)? {
+            info.mode = BaseMode::TrunkUpstream;
+            info.base_ref = Some(short(&up).to_owned());
+            if against(git, &mut info, &up, opts)? {
+                info.notes.push(format!(
+                    "trunk mode · unpushed commits ({}..HEAD)",
+                    short(&up)
+                ));
+                if info.count == 0 {
+                    info.hint =
+                        Some("nothing unpushed · --base HEAD~10 to look further back".into());
                 }
+                return Ok(info);
             }
-            info.mode = BaseMode::TrunkRecent;
-            info.base_ref = None;
-            recent(git, &mut info, opts.trunk_depth, opts.empty_tree)?;
-            info.notes.push(format!(
-                "trunk mode · no upstream · last {} commits",
-                opts.trunk_depth
-            ));
-            return Ok(info);
         }
+        info.mode = BaseMode::TrunkRecent;
+        info.base_ref = None;
+        recent(git, &mut info, opts.trunk_depth, opts.empty_tree)?;
+        info.notes.push(format!(
+            "trunk mode · no upstream · last {} commits",
+            opts.trunk_depth
+        ));
+        return Ok(info);
     }
 
     // 4. Feature branch or detached HEAD: the closest candidate wins.

@@ -1,4 +1,4 @@
-//! Viewed marks end to end (PLAN §6.3, M5).
+//! Viewed marks end to end.
 
 mod common;
 

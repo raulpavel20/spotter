@@ -24,14 +24,32 @@ const TICK: Duration = Duration::from_millis(250);
 
 fn main() -> ExitCode {
     let args = Args::parse();
+    if let Some(path) = spotter::log::init_from_env() {
+        spotter::log::line(|| {
+            format!(
+                "spotter {} started; logging to {path}",
+                env!("CARGO_PKG_VERSION")
+            )
+        });
+    }
     let path = args.path.clone().unwrap_or_else(|| ".".into());
     let repo = match Repo::discover(&path) {
         Ok(r) => r,
         Err(e) => {
+            spotter::log::line(|| format!("discovery failed: {e}"));
             eprintln!("spotter: {e}");
             return ExitCode::from(2);
         }
     };
+    spotter::log::line(|| {
+        format!(
+            "repo {} (git dir {}, common dir {}), git {}",
+            repo.root.display(),
+            repo.git_dir.display(),
+            repo.common_dir.display(),
+            repo.version
+        )
+    });
     match run(repo, args) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
@@ -109,6 +127,7 @@ fn launch(
     input: &Input,
     terminal: &mut term::Tui,
 ) -> anyhow::Result<Result<(), String>> {
+    spotter::log::line(|| format!("editor: {:?} (gui: {})", l.argv, l.gui));
     if l.gui {
         return Ok(editor::spawn_detached(l, cwd));
     }
@@ -131,7 +150,10 @@ fn run(repo: Repo, args: Args) -> anyhow::Result<()> {
     } else {
         match watch::spawn(&repo, tx.clone()) {
             Ok(h) => (WatchStatus::Live, Some(h)),
-            Err(e) => (WatchStatus::Error(e), None),
+            Err(e) => {
+                spotter::log::line(|| format!("watcher failed, polling instead: {e}"));
+                (WatchStatus::Error(e), None)
+            }
         }
     };
     let env = |k: &str| std::env::var(k).ok();
@@ -147,6 +169,15 @@ fn run(repo: Repo, args: Args) -> anyhow::Result<()> {
         env("COLORTERM"),
         env("COLORFGBG"),
     );
+    spotter::log::line(|| {
+        format!(
+            "settings from {}; warnings: {:?}",
+            config_path
+                .as_ref()
+                .map_or("(none)".into(), |p| p.display().to_string()),
+            loaded.warnings
+        )
+    });
     if let Some(w) = loaded.warnings.first() {
         app.error = Some(format!("settings: {w}"));
     }

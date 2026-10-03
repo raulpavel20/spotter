@@ -1,4 +1,4 @@
-//! Viewed marks (PLAN §6.3): content-addressed, stored in
+//! Viewed marks: content-addressed, stored in
 //! `<git-common-dir>/spotter/viewed.json`, never committed.
 
 use std::collections::HashMap;

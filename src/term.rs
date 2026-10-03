@@ -23,6 +23,7 @@ fn install_panic_hook() {
         let previous = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
             restore();
+            crate::log::line(|| format!("PANIC: {info}"));
             previous(info);
             std::process::exit(101);
         }));

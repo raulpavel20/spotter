@@ -1,4 +1,4 @@
-//! UI snapshots at 80×24 and 160×48 (PLAN §9 M3), rendered from real repos.
+//! UI snapshots at 80×24 and 160×48, rendered from real repos.
 
 mod common;
 
@@ -6,7 +6,7 @@ use std::time::Instant;
 
 use common::{Harness, TestRepo};
 
-/// A small feature branch in the shape of PLAN §4.
+/// A small feature branch, like the README's example.
 fn demo() -> TestRepo {
     let r = TestRepo::new();
     r.commit_file(

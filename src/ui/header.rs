@@ -57,10 +57,8 @@ pub fn draw(f: &mut Frame, area: Rect, app: &App) {
                             left.push(Span::raw("base "));
                         }
                         left.push(Span::raw(base.clone()));
-                        if wide {
-                            if let Some(mb) = &b.merge_base {
-                                left.push(Span::styled(format!(" @{}", short(mb)), theme::dim()));
-                            }
+                        if wide && let Some(mb) = &b.merge_base {
+                            left.push(Span::styled(format!(" @{}", short(mb)), theme::dim()));
                         }
                     }
                     if wide {
@@ -125,14 +123,14 @@ pub fn banner_lines(app: &App, width: u16) -> Vec<Line<'static>> {
             theme::error(),
         ));
     }
-    if let WatchStatus::Error(e) = &app.watch {
-        if lines.len() < 2 {
-            let text = format!(" watch error: {e} · polling every 2 s");
-            lines.push(Line::styled(
-                super::text::truncate_end(&text, width as usize),
-                theme::banner(),
-            ));
-        }
+    if let WatchStatus::Error(e) = &app.watch
+        && lines.len() < 2
+    {
+        let text = format!(" watch error: {e} · polling every 2 s");
+        lines.push(Line::styled(
+            super::text::truncate_end(&text, width as usize),
+            theme::banner(),
+        ));
     }
     lines
 }

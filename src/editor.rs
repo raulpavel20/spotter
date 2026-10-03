@@ -1,4 +1,4 @@
-//! Opening files in an editor (PLAN §6.6).
+//! Opening files in an editor.
 
 use std::path::Path;
 use std::process::{Command, Stdio};

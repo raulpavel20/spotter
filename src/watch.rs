@@ -1,4 +1,4 @@
-//! Gitignore-aware file watching (PLAN §6.2).
+//! Gitignore-aware file watching.
 //!
 //! The worktree gets one non-recursive watch per non-ignored directory, so
 //! `node_modules/` or `target/` never exhaust inotify watches. Inside the
@@ -132,14 +132,17 @@ pub fn spawn(repo: &Repo, out: Sender<Msg>) -> Result<WatchHandle, String> {
     })
     .map_err(|e| e.to_string())?;
 
+    let mut watched = 0usize;
     for dir in walk_dirs(&cls.root) {
+        watched += 1;
         // A directory that vanished mid-walk is fine; anything else is not.
-        if let Err(e) = watcher.watch(&dir, RecursiveMode::NonRecursive) {
-            if dir.exists() {
-                return Err(format!("{}: {e}", dir.display()));
-            }
+        if let Err(e) = watcher.watch(&dir, RecursiveMode::NonRecursive)
+            && dir.exists()
+        {
+            return Err(format!("{}: {e}", dir.display()));
         }
     }
+    crate::log::line(|| format!("watching {} worktree directories", watched));
     let mut git_dirs = vec![cls.git_dir.clone()];
     if cls.common_dir != cls.git_dir {
         git_dirs.push(cls.common_dir.clone());

@@ -119,7 +119,7 @@ impl FileChange {
         self.path.to_str_lossy().into_owned()
     }
 
-    /// The content key used for viewed marks (PLAN §6.3).
+    /// The content key used for viewed marks.
     pub fn mark_key(&self) -> String {
         format!(
             "{}:{}:{}",

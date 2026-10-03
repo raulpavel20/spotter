@@ -2,9 +2,15 @@
 name = "spotter-tui"
 version = "0.1.0"
 edition = "2024"
-description = "A live, read-only terminal review view of what changed on your branch"
-license = "MIT"
-rust-version = "1.85"
+description = "A live, read-only terminal view of what changed on your branch, built for reviewing a coding agent's work"
+license = "MIT OR Apache-2.0"
+rust-version = "1.88"
+repository = "https://github.com/raulpavel20/spotter"
+homepage = "https://github.com/raulpavel20/spotter"
+readme = "README.md"
+keywords = ["git", "tui", "review", "diff", "agent"]
+categories = ["command-line-utilities", "development-tools"]
+exclude = ["/.github", "/target", "/assets"]
 
 [lib]
 name = "spotter"
@@ -49,3 +55,8 @@ opt-level = 3
 
 [profile.dev.package.onig_sys]
 opt-level = 3
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"

@@ -1,5 +1,5 @@
 //! The background worker: refreshes and patch loads off the UI thread,
-//! with request coalescing and a patch cache (PLAN §6.2, §8).
+//! with request coalescing and a patch cache.
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -184,7 +184,10 @@ impl Worker {
                 &mut self.cache,
             ),
         };
-        let snap = result.map_err(|e| e.to_string())?;
+        let snap = result.map_err(|e| {
+            crate::log::line(|| format!("refresh {kind:?} failed: {e}"));
+            e.to_string()
+        })?;
         self.last = Some(snap.clone());
         Ok(snap)
     }
@@ -196,10 +199,10 @@ impl Worker {
         opts: DiffOpts,
     ) -> Result<LoadedPatch, String> {
         let key = (spec.clone(), opts);
-        if !spec.is_volatile() {
-            if let Some(p) = self.patches.get(&key, files) {
-                return Ok(p);
-            }
+        if !spec.is_volatile()
+            && let Some(p) = self.patches.get(&key, files)
+        {
+            return Ok(p);
         }
         let p = refresh::load_patch(&self.repo, spec, files, opts).map_err(|e| e.to_string())?;
         if !spec.is_volatile() && !p.lazy {

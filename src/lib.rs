@@ -7,6 +7,7 @@ pub mod diffview;
 pub mod editor;
 pub mod git;
 pub mod highlight;
+pub mod log;
 pub mod model;
 pub mod msg;
 pub mod refresh;

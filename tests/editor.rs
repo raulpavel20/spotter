@@ -1,4 +1,4 @@
-//! Opening files in the editor (PLAN §6.6, M6).
+//! Opening files in the editor.
 
 mod common;
 

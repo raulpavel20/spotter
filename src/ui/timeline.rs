@@ -152,12 +152,11 @@ pub fn draw(f: &mut Frame, area: Rect, app: &mut App) {
         }
         right.push(Span::raw(" "));
         lines.push(style_row(left_right(left, right, width), selected, focused));
-        if row == 0 {
-            if let Some(h) = &hint {
-                if lines.len() < list_h {
-                    lines.push(Line::styled(format!("   {h}"), theme::dim()));
-                }
-            }
+        if row == 0
+            && let Some(h) = &hint
+            && lines.len() < list_h
+        {
+            lines.push(Line::styled(format!("   {h}"), theme::dim()));
         }
     }
     let list_area = Rect {

@@ -1,4 +1,4 @@
-//! Live refresh: lock safety, convergence and the watcher (PLAN §6.2, M4).
+//! Live refresh: lock safety, convergence and the watcher.
 
 mod common;
 

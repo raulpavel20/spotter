@@ -171,7 +171,7 @@ impl Repo {
         "0".repeat(self.empty_tree.len())
     }
 
-    /// Where viewed marks live (PLAN §6.3).
+    /// Where viewed marks live.
     pub fn marks_path(&self) -> PathBuf {
         self.common_dir.join("spotter").join("viewed.json")
     }

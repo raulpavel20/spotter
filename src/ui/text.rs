@@ -1,5 +1,5 @@
 //! Display-width helpers: tab expansion, control-character escaping,
-//! column slicing and truncation (PLAN §6.4 "Display").
+//! column slicing and truncation.
 
 use bstr::ByteSlice;
 use ratatui::style::Style;

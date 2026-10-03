@@ -158,7 +158,13 @@ pub fn full(
         },
     )?;
     let remerge = repo.supports_remerge_diff();
-    let mut commits = log::timeline(git, &base.range, base::SANITY_LIMIT)?;
+    // The timeline and the working tree don't depend on each other.
+    let (commits, lists) = std::thread::scope(|s| {
+        let log = s.spawn(|| log::timeline(git, &base.range, base::SANITY_LIMIT));
+        let lists = worktree_lists(repo, &base, opts.include_wt);
+        (log.join().expect("log thread"), lists)
+    });
+    let mut commits = commits?;
     for c in commits.iter_mut().filter(|c| c.is_merge()) {
         let spec = commit_spec(c, remerge, &opts.first_parent, &repo.empty_tree);
         if let Some(files) = cache.merges.get(&spec) {
@@ -185,7 +191,7 @@ pub fn full(
         .flat_map(|c| c.files.iter_mut())
         .collect();
     collapse.apply(repo, &mut all);
-    worktree_parts(repo, &collapse, &mut snap)?;
+    set_worktree_lists(repo, &collapse, &mut snap, lists?);
     snap.change = head_change(repo, prev, &snap)?;
     Ok(snap)
 }
@@ -209,7 +215,8 @@ pub fn worktree(
     snap.ops = repo.in_progress();
     snap.change = None;
     let collapse = Collapser::new(repo, cfg);
-    worktree_parts(repo, &collapse, &mut snap)?;
+    let lists = worktree_lists(repo, &snap.base, snap.opts.include_wt)?;
+    set_worktree_lists(repo, &collapse, &mut snap, lists);
     Ok(snap)
 }
 
@@ -246,53 +253,62 @@ fn head_change(
     }
 }
 
-fn worktree_parts(repo: &Repo, collapse: &Collapser, snap: &mut Snapshot) -> Result<(), GitError> {
+type Lists = (Vec<FileChange>, Option<Vec<FileChange>>);
+
+/// ◌ and Σ file lists, with working-tree blob ids. `status`, `diff HEAD`
+/// and `diff <merge-base>` are independent, so they run in parallel.
+fn worktree_lists(repo: &Repo, base: &BaseInfo, include_wt: bool) -> Result<Lists, GitError> {
     let git = &repo.git;
-    let head = snap
-        .base
-        .head
-        .clone()
-        .unwrap_or_else(|| repo.empty_tree.clone());
-    let st = status::status(git)?;
-    let mut unc = diff::file_list(git, &DiffSpec::Worktree(head))?;
+    let head = base.head.clone().unwrap_or_else(|| repo.empty_tree.clone());
+    let total_spec = match (&base.merge_base, &base.head) {
+        (Some(mb), Some(h)) => Some(if include_wt {
+            DiffSpec::Worktree(mb.clone())
+        } else {
+            DiffSpec::Trees(mb.clone(), h.clone())
+        }),
+        _ => None,
+    };
+    let (st, unc, total) = std::thread::scope(|s| {
+        let st = s.spawn(|| status::status(git));
+        let total = total_spec
+            .as_ref()
+            .map(|spec| s.spawn(move || diff::file_list(git, spec)));
+        let unc = diff::file_list(git, &DiffSpec::Worktree(head));
+        (
+            st.join().expect("status thread"),
+            unc,
+            total.map(|t| t.join().expect("diff thread")),
+        )
+    });
+    let st = st?;
+    let mut unc = unc?;
+    let mut total = total.transpose()?;
     mark_unmerged(&mut unc, &st.unmerged, repo);
     let untracked = untracked_files(repo, &st.untracked);
     unc.extend(untracked.iter().cloned());
-
-    let mut total = match (&snap.base.merge_base, &snap.base.head) {
-        (Some(mb), Some(head)) => {
-            if snap.opts.include_wt {
-                let mut t = diff::file_list(git, &DiffSpec::Worktree(mb.clone()))?;
-                mark_unmerged(&mut t, &st.unmerged, repo);
-                t.extend(untracked);
-                Some(t)
-            } else {
-                Some(diff::file_list(
-                    git,
-                    &DiffSpec::Trees(mb.clone(), head.clone()),
-                )?)
-            }
-        }
-        _ => None,
-    };
+    if include_wt && let Some(t) = &mut total {
+        mark_unmerged(t, &st.unmerged, repo);
+        t.extend(untracked);
+    }
 
     // Working-tree blob ids, shared between ◌ and Σ.
     let null = repo.null_oid();
-    let mut want: Vec<BString> = Vec::new();
     let needs = |f: &FileChange| {
         f.new_oid == null && f.status != Status::Deleted && f.new_mode != MODE_GITLINK
     };
-    for f in unc.iter().chain(total.iter().flatten()) {
-        if needs(f) && !want.contains(&f.path) {
-            want.push(f.path.clone());
-        }
-    }
+    let mut seen: HashSet<&BString> = HashSet::new();
+    let want: Vec<BString> = unc
+        .iter()
+        .chain(total.iter().flatten())
+        .filter(|f| needs(f) && seen.insert(&f.path))
+        .map(|f| f.path.clone())
+        .collect();
     let hashes = hash_worktree(repo, &want)?;
     for f in unc.iter_mut().chain(total.iter_mut().flatten()) {
-        if needs(f) {
-            if let Some(h) = hashes.get(&f.path) {
-                f.new_oid = h.clone();
-            }
+        if needs(f)
+            && let Some(h) = hashes.get(&f.path)
+        {
+            f.new_oid = h.clone();
         }
     }
 
@@ -305,12 +321,15 @@ fn worktree_parts(repo: &Repo, collapse: &Collapser, snap: &mut Snapshot) -> Res
     if let Some(t) = &mut total {
         t.retain(changed);
     }
+    Ok((unc, total))
+}
 
+fn set_worktree_lists(repo: &Repo, collapse: &Collapser, snap: &mut Snapshot, lists: Lists) {
+    let (mut unc, mut total) = lists;
     let mut all: Vec<&mut FileChange> = unc.iter_mut().chain(total.iter_mut().flatten()).collect();
     collapse.apply(repo, &mut all);
     snap.uncommitted = unc;
     snap.total = total;
-    Ok(())
 }
 
 fn mark_unmerged(files: &mut Vec<FileChange>, unmerged: &[BString], repo: &Repo) {
@@ -504,7 +523,7 @@ pub fn hash_worktree(repo: &Repo, paths: &[BString]) -> Result<HashMap<BString, 
     Ok(out)
 }
 
-/// Collapse rules (PLAN §6.4).
+/// Collapse rules.
 pub struct Collapser {
     patterns: Gitignore,
     /// Files with more changed lines start collapsed.

@@ -1,5 +1,5 @@
 //! The diff view's state: a whole target flattened into display rows, a
-//! pager-style scroll position, folding, and navigation (PLAN §4).
+//! pager-style scroll position, folding, and navigation.
 //!
 //! There is no line cursor: the *current file* is the file of the row at
 //! the top of the viewport. Once a file's own header has scrolled off, the
@@ -481,10 +481,10 @@ impl DiffView {
                 out.push(r.file);
             }
         }
-        if let Some(&last) = out.last() {
-            if last + 1 < self.files.len() {
-                out.push(last + 1);
-            }
+        if let Some(&last) = out.last()
+            && last + 1 < self.files.len()
+        {
+            out.push(last + 1);
         }
         out
     }

@@ -434,10 +434,10 @@ fn code_styler<'a>(
         while ei < emph.len() && (emph[ei].1 as usize) <= off {
             ei += 1;
         }
-        if let (Some(&(a, _)), Some(bg)) = (emph.get(ei), emph_bg) {
-            if a as usize <= off {
-                st = st.bg(bg);
-            }
+        if let (Some(&(a, _)), Some(bg)) = (emph.get(ei), emph_bg)
+            && a as usize <= off
+        {
+            st = st.bg(bg);
         }
         st
     }

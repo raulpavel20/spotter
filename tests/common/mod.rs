@@ -1,4 +1,4 @@
-//! Throwaway repositories for integration tests (PLAN §10).
+//! Throwaway repositories for integration tests.
 #![allow(dead_code)]
 
 use std::cell::Cell;
@@ -162,7 +162,7 @@ impl TestRepo {
         bare
     }
 
-    /// Settings that would break naive parsing (PLAN §10).
+    /// Settings that would break naive parsing.
     pub fn hostile(&self) {
         let script = self.tmp.path().join("external-diff.sh");
         fs::write(&script, "#!/bin/sh\necho EXTERNAL DIFF\n").unwrap();

@@ -1,4 +1,4 @@
-//! Base resolution scenarios (PLAN §6.1), each under clean and hostile config.
+//! Base resolution scenarios, each under clean and hostile config.
 
 mod common;
 

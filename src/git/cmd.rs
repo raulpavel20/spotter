@@ -1,4 +1,4 @@
-//! The single choke point for running git (PLAN §7).
+//! The single choke point for running git.
 //!
 //! Every git invocation goes through [`Git::cmd`]. Subcommands are a closed
 //! enum, so nothing outside the read-only allowlist can be spawned, and the
@@ -250,6 +250,25 @@ impl Cmd<'_> {
     }
 
     pub fn run(self) -> Result<Output, GitError> {
+        let started = std::time::Instant::now();
+        let result = self.run_inner();
+        crate::log::line(|| {
+            let args: Vec<String> = self
+                .args
+                .iter()
+                .map(|a| a.to_string_lossy().into_owned())
+                .collect();
+            let what = format!("git {} {}", self.sub.name(), args.join(" "));
+            let ms = started.elapsed().as_millis();
+            match &result {
+                Ok(o) => format!("{what} -> {} in {ms}ms, {} bytes", o.code, o.stdout.len()),
+                Err(e) => format!("{what} -> FAILED in {ms}ms: {e}"),
+            }
+        });
+        result
+    }
+
+    fn run_inner(&self) -> Result<Output, GitError> {
         if let Err(reason) = validate(self.sub, &self.args) {
             return Err(GitError {
                 command: self.display(),
