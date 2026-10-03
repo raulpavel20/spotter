@@ -5,9 +5,10 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use ratatui::layout::Rect;
 
 use crate::config::{Config, Kind, Loaded, SETTINGS, Source, Value};
-use crate::diffview::DiffView;
+use crate::diffview::{DiffView, Wrap};
 use crate::git::diff::{DiffOpts, DiffSpec};
 use crate::model::{Commit, FileChange, Status, TargetId};
 use crate::msg::{EditRequest, Effect, Msg, RefreshKind, WatchStatus};
@@ -95,6 +96,8 @@ pub struct App {
     pub settings: Option<SettingsState>,
     /// `W`: ignore whitespace for this session, overriding the setting.
     pub ws_override: Option<bool>,
+    /// `z`: wrap long lines for this session, overriding the setting.
+    pub wrap_override: Option<bool>,
     pub palette: Palette,
     /// `COLORTERM` and `COLORFGBG`, captured at start for the palette.
     env: (Option<String>, Option<String>),
@@ -144,6 +147,7 @@ impl App {
             config_path: None,
             settings: None,
             ws_override: None,
+            wrap_override: None,
             palette,
             env,
             explorer_open: false,
@@ -196,6 +200,12 @@ impl App {
         } else {
             &glyphs::UNICODE
         }
+    }
+
+    /// Whether long lines in the diff wrap: the setting, or the session's
+    /// `z` toggle.
+    pub fn wrap_lines(&self) -> bool {
+        self.wrap_override.unwrap_or(self.config.wrap_lines)
     }
 
     /// Patch options in effect: settings plus the session's `W` toggle.
@@ -311,6 +321,7 @@ impl App {
         let fx = self.handle(msg);
         // Marks may have changed (keys, reloads); viewed files fold.
         self.sync_viewed();
+        self.sync_wrap();
         fx
     }
 
@@ -448,6 +459,8 @@ impl App {
 
     /// Loads and highlighting for whatever the diff viewport shows.
     fn view_effects(&mut self) -> Vec<Effect> {
+        // What is on screen depends on how lines wrap.
+        self.sync_wrap();
         let mut fx = self.lazy_loads();
         fx.extend(self.highlights());
         fx
@@ -687,6 +700,27 @@ impl App {
         }
     }
 
+    /// Tells the open diff what long lines wrap to, if they wrap. Runs
+    /// after every change, so resizes, the explorer and settings reflow.
+    pub fn sync_wrap(&mut self) {
+        let wrap = self.wrap_lines().then(|| Wrap {
+            body: self.diff_body_width(),
+            line_numbers: self.config.line_numbers,
+            tab: self.config.tab_width,
+        });
+        if let Some(d) = self.diff.as_mut() {
+            d.set_wrap(wrap);
+        }
+    }
+
+    /// The diff's width: the screen, less the explorer when it sits beside
+    /// the diff (as `ui::diff::draw` lays it out).
+    fn diff_body_width(&self) -> usize {
+        let (w, h) = self.size;
+        let body = Rect::new(0, 2, w, h.saturating_sub(4));
+        crate::ui::explorer::split(self, body).diff.width as usize
+    }
+
     fn toggle_target_viewed(&mut self) -> Vec<Effect> {
         let files = self.selected_files().to_vec();
         if files.is_empty() {
@@ -774,6 +808,13 @@ impl App {
         {
             fx.push(Effect::SetWorkerConfig(Box::new(new.clone())));
             fx.push(self.refresh(RefreshKind::Full));
+        }
+        // A changed setting wins over the session's own toggle.
+        if old.ignore_whitespace != new.ignore_whitespace {
+            self.ws_override = None;
+        }
+        if old.wrap_lines != new.wrap_lines {
+            self.wrap_override = None;
         }
         if old.total_includes_uncommitted != new.total_includes_uncommitted {
             self.opts.include_wt = new.total_includes_uncommitted;
@@ -1195,7 +1236,12 @@ impl App {
                     d.scroll_h(-8);
                 }
             }
-            KeyCode::Char('l') | KeyCode::Right => d.scroll_h(8),
+            // Wrapped lines have nothing to the right.
+            KeyCode::Char('l') | KeyCode::Right => {
+                if d.wrap.is_none() {
+                    d.scroll_h(8)
+                }
+            }
             KeyCode::Enter | KeyCode::Char('o') => {
                 if let Some(i) = d.current_file() {
                     d.toggle_fold(i);
@@ -1242,6 +1288,16 @@ impl App {
                     self.toast(format!("nothing left to review {v}"))
                 }
             },
+            KeyCode::Char('z') => {
+                let on = !self.wrap_lines();
+                self.wrap_override = Some(on);
+                self.sync_wrap();
+                self.toast(if on {
+                    "long lines wrapped (this session)"
+                } else {
+                    "long lines cut off (this session)"
+                });
+            }
             KeyCode::Char('W') => {
                 let on = !self.diff_opts().ignore_ws;
                 self.ws_override = Some(on);

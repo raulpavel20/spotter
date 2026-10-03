@@ -14,6 +14,7 @@ use crate::git::diff::{DiffOpts, DiffSpec};
 use crate::highlight::FileHighlight;
 use crate::model::{FileChange, FilePatch, LineKind, Status, TargetId};
 use crate::refresh::MAX_UNTRACKED;
+use crate::ui::text::{self, WrapLayout};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RowKind {
@@ -23,6 +24,9 @@ pub enum RowKind {
     Hunk(usize),
     /// Hunk index, line index.
     Line(usize, usize),
+    /// A wrapped line's continuation: hunk, line, and which row of the
+    /// line it is (from 1).
+    Wrap(usize, usize, usize),
     /// Why an unviewed file starts collapsed (lockfile, generated…).
     Collapsed,
     Binary,
@@ -40,6 +44,21 @@ pub enum RowKind {
 pub struct Row {
     pub file: usize,
     pub kind: RowKind,
+}
+
+impl Row {
+    fn is_wrap(&self) -> bool {
+        matches!(self.kind, RowKind::Wrap(..))
+    }
+}
+
+/// What long lines wrap to: the diff body's width, and what decides the
+/// room left for code in it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Wrap {
+    pub body: usize,
+    pub line_numbers: bool,
+    pub tab: usize,
 }
 
 /// Extended header lines that the file header already conveys.
@@ -100,10 +119,16 @@ pub struct DiffView {
     /// Content keys whose highlighting is in flight.
     pub hl_requested: HashSet<String>,
     pub explorer_offset: usize,
+    /// Long lines wrap when set; otherwise they are cut off at the edge.
+    pub wrap: Option<Wrap>,
+    /// How each wrapped line breaks, by file, hunk and line.
+    pub wraps: HashMap<(usize, usize, usize), WrapLayout>,
 }
 
-/// A position that survives a rebuild: file path and row offset in it.
-pub type Anchor = Option<(Vec<u8>, usize)>;
+/// A position that survives a rebuild, even one that rewraps lines: the
+/// file's path, the index of the top row among the file's unwrapped rows,
+/// and which row of a wrapped line is on top.
+pub type Anchor = Option<(Vec<u8>, usize, usize)>;
 
 impl DiffView {
     pub fn new(target: TargetId, spec: DiffSpec, files: Vec<FileChange>, opts: DiffOpts) -> Self {
@@ -132,6 +157,8 @@ impl DiffView {
             highlights: HashMap::new(),
             hl_requested: HashSet::new(),
             explorer_offset: 0,
+            wrap: None,
+            wraps: HashMap::new(),
         };
         v.set_keys();
         v.rebuild();
@@ -151,6 +178,29 @@ impl DiffView {
         self.hl_requested.clear();
     }
 
+    /// Wraps long lines (or stops), keeping the same line on top.
+    pub fn set_wrap(&mut self, wrap: Option<Wrap>) {
+        if self.wrap != wrap {
+            self.wrap = wrap;
+            if wrap.is_some() {
+                self.hscroll = 0;
+            }
+            self.rebuild_anchored();
+        }
+    }
+
+    /// Columns before a line's `+`/`-` sign: both line numbers, or one
+    /// space.
+    pub fn gutter_cols(&self, line_numbers: bool) -> usize {
+        if line_numbers { 2 * self.gutter + 3 } else { 1 }
+    }
+
+    /// Columns left for code in a body `body` wide: after the gutter and
+    /// the sign.
+    pub fn code_width(&self, body: usize, line_numbers: bool) -> usize {
+        body.saturating_sub(self.gutter_cols(line_numbers) + 2)
+    }
+
     pub fn set_collapse_viewed(&mut self, on: bool) {
         if self.collapse_viewed != on {
             self.collapse_viewed = on;
@@ -164,6 +214,12 @@ impl DiffView {
             .get(file)
             .and_then(|k| self.highlights.get(k))
             .map(Arc::as_ref)
+    }
+
+    /// An untracked file too big to show.
+    fn too_large(&self, i: usize) -> bool {
+        let f = &self.files[i];
+        f.status == Status::Untracked && f.size.unwrap_or(0) > MAX_UNTRACKED && !f.is_binary()
     }
 
     fn is_viewed(&self, i: usize) -> bool {
@@ -185,8 +241,21 @@ impl DiffView {
     pub fn rebuild(&mut self) {
         let mut rows = Vec::new();
         let mut file_rows = Vec::with_capacity(self.files.len());
-        let mut max_no = 0u32;
         let row = |file, kind| Row { file, kind };
+        // The gutter fits the largest line number shown; wrapping needs
+        // its width first.
+        let max_no = (0..self.files.len())
+            .filter(|&i| !self.is_folded(i) && !self.too_large(i))
+            .filter_map(|i| self.patches[i].as_ref())
+            .flat_map(|p| &p.hunks)
+            .map(|h| (h.old_start + h.old_len).max(h.new_start + h.new_len))
+            .max()
+            .unwrap_or(0);
+        self.gutter = max_no.to_string().len().max(3);
+        let wrap = self
+            .wrap
+            .map(|w| (self.code_width(w.body, w.line_numbers), w.tab));
+        let mut wraps = HashMap::new();
         for i in 0..self.files.len() {
             if i > 0 {
                 rows.push(row(i, RowKind::Separator));
@@ -203,11 +272,7 @@ impl DiffView {
                 }
                 continue;
             }
-            let f = &self.files[i];
-            if f.status == Status::Untracked
-                && f.size.unwrap_or(0) > MAX_UNTRACKED
-                && !f.is_binary()
-            {
+            if self.too_large(i) {
                 rows.push(row(i, RowKind::TooLarge));
                 continue;
             }
@@ -234,16 +299,23 @@ impl DiffView {
                     rows.push(row(i, RowKind::Blank));
                 }
                 rows.push(row(i, RowKind::Hunk(h)));
-                max_no = max_no
-                    .max(hunk.old_start + hunk.old_len)
-                    .max(hunk.new_start + hunk.new_len);
-                for l in 0..hunk.lines.len() {
+                for (l, line) in hunk.lines.iter().enumerate() {
                     rows.push(row(i, RowKind::Line(h, l)));
+                    let Some((room, tab)) = wrap else { continue };
+                    if line.kind == LineKind::NoNewline {
+                        continue;
+                    }
+                    if let Some(layout) = text::wrap_points(&line.text, tab, room) {
+                        for part in 1..=layout.starts.len() {
+                            rows.push(row(i, RowKind::Wrap(h, l, part)));
+                        }
+                        wraps.insert((i, h, l), layout);
+                    }
                 }
             }
         }
-        self.gutter = max_no.to_string().len().max(3);
         self.rows = rows;
+        self.wraps = wraps;
         self.file_rows = file_rows;
         self.clamp_scroll();
     }
@@ -361,14 +433,23 @@ impl DiffView {
 
     pub fn anchor(&self) -> Anchor {
         let file = self.current_file()?;
-        Some((
-            self.files[file].path.to_vec(),
-            self.scroll.saturating_sub(self.file_rows[file]),
-        ))
+        let start = self.file_rows[file];
+        let top = self.scroll.clamp(start, self.rows.len().checked_sub(1)?);
+        // The top row's line: unwrapped rows up to it, less one.
+        let line = self.rows[start..=top]
+            .iter()
+            .filter(|r| !r.is_wrap())
+            .count()
+            .saturating_sub(1);
+        let part = match self.rows[top].kind {
+            RowKind::Wrap(_, _, part) => part,
+            _ => 0,
+        };
+        Some((self.files[file].path.to_vec(), line, part))
     }
 
     pub fn restore(&mut self, anchor: Anchor) {
-        let Some((path, off)) = anchor else {
+        let Some((path, line, part)) = anchor else {
             return;
         };
         let Some(i) = self.files.iter().position(|f| f.path.as_bytes() == path) else {
@@ -379,7 +460,26 @@ impl DiffView {
             .file_rows
             .get(i + 1)
             .map_or(self.rows.len(), |&r| r - 1);
-        self.scroll = (start + off).min(end.saturating_sub(1)).max(start);
+        // The same line if it is still there, else the file's last row.
+        let mut top = end.saturating_sub(1).max(start);
+        let mut seen = 0;
+        for r in start..end {
+            if self.rows[r].is_wrap() {
+                continue;
+            }
+            if seen == line {
+                top = r;
+                break;
+            }
+            seen += 1;
+        }
+        // The same row of a wrapped line, as far as it still wraps.
+        for _ in 0..part {
+            if top + 1 < end && self.rows[top + 1].is_wrap() {
+                top += 1;
+            }
+        }
+        self.scroll = top;
         self.clamp_scroll();
     }
 
@@ -500,7 +600,7 @@ impl DiffView {
             .iter()
             .filter(|r| r.file == cur)
             .filter_map(|r| match r.kind {
-                RowKind::Line(h, l) => Some((h, l)),
+                RowKind::Line(h, l) | RowKind::Wrap(h, l, _) => Some((h, l)),
                 _ => None,
             });
         let mut first_code = None;
@@ -675,6 +775,101 @@ diff --git a/b b/b
         v.scroll = 0;
         v.restore(a);
         assert_eq!(v.scroll, 4);
+    }
+
+    /// One file whose changed lines are too long for 20 columns of code.
+    fn long_view() -> DiffView {
+        let patch = "diff --git a/a b/a
+--- a/a
++++ b/a
+@@ -1,3 +1,3 @@
+ short
+-let total = price * quantity + shipping + tax;
++let total = price * quantity + shipping + taxes - discount;
+ end
+";
+        let parsed = parse_patch(patch.as_bytes());
+        let mut v = DiffView::new(
+            TargetId::Uncommitted,
+            DiffSpec::Worktree("HEAD".into()),
+            vec![file("a")],
+            DiffOpts::default(),
+        );
+        v.viewport = 2;
+        v.set_patches(parsed.into_iter().map(Some).collect(), false);
+        v
+    }
+
+    /// Gutter 3 + 3 + 3 spaces, sign and space: 20 columns of code.
+    const NARROW: Wrap = Wrap {
+        body: 31,
+        line_numbers: true,
+        tab: 4,
+    };
+
+    fn row_of(v: &DiffView, kind: RowKind) -> usize {
+        v.rows.iter().position(|r| r.kind == kind).unwrap()
+    }
+
+    #[test]
+    fn long_lines_wrap_into_rows() {
+        let mut v = long_view();
+        assert_eq!(v.code_width(NARROW.body, true), 20);
+        let unwrapped = v.rows.len();
+        v.set_wrap(Some(NARROW));
+        use RowKind::*;
+        let kinds: Vec<RowKind> = v.rows.iter().map(|r| r.kind).collect();
+        assert_eq!(
+            kinds,
+            [
+                FileHeader,
+                Hunk(0),
+                Line(0, 0),
+                Line(0, 1),
+                Wrap(0, 1, 1),
+                Wrap(0, 1, 2),
+                Line(0, 2),
+                Wrap(0, 2, 1),
+                Wrap(0, 2, 2),
+                Line(0, 3),
+            ]
+        );
+        assert_eq!(v.wraps.len(), 2, "short lines don't wrap");
+        // Scrolling counts screen rows.
+        assert_eq!(v.max_scroll(), v.rows.len() - v.viewport);
+        v.set_wrap(None);
+        assert_eq!(v.rows.len(), unwrapped);
+        assert!(v.wraps.is_empty());
+    }
+
+    #[test]
+    fn wrapping_keeps_the_same_line_on_top() {
+        let mut v = long_view();
+        v.scroll_to(row_of(&v, RowKind::Line(0, 2)));
+        v.set_wrap(Some(NARROW));
+        assert_eq!(v.rows[v.scroll].kind, RowKind::Line(0, 2));
+        // From the middle of a wrapped line back to the whole line…
+        v.scroll_by(1);
+        assert_eq!(v.rows[v.scroll].kind, RowKind::Wrap(0, 2, 1));
+        v.set_wrap(None);
+        assert_eq!(v.rows[v.scroll].kind, RowKind::Line(0, 2));
+        // …and a reflow to a wider body keeps the line, as far as it still
+        // wraps.
+        v.set_wrap(Some(NARROW));
+        v.scroll_by(2);
+        assert_eq!(v.rows[v.scroll].kind, RowKind::Wrap(0, 2, 2));
+        v.set_wrap(Some(Wrap { body: 50, ..NARROW }));
+        assert_eq!(v.rows[v.scroll].kind, RowKind::Wrap(0, 2, 1));
+    }
+
+    #[test]
+    fn edit_line_counts_continuation_rows() {
+        let mut v = long_view();
+        v.set_wrap(Some(NARROW));
+        // The + line's last row just below the pinned header.
+        v.scroll_to(row_of(&v, RowKind::Wrap(0, 2, 2)) - 1);
+        assert_eq!(v.rows[v.reading_row()].kind, RowKind::Wrap(0, 2, 2));
+        assert_eq!(v.edit_line(), Some(2));
     }
 
     #[test]

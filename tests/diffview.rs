@@ -6,6 +6,7 @@ use common::{Harness, TestRepo};
 use ratatui::buffer::Buffer;
 use ratatui::style::Color;
 use spotter::app::DiffFocus;
+use spotter::diffview::RowKind;
 use spotter::ui::palette::Palette;
 
 /// Position of the first cell of `needle` on the row containing `row_has`.
@@ -343,4 +344,75 @@ fn diff_frame_shows_focus_when_the_explorer_is_open() {
         (true, false),
         "explorer focused: the reverse"
     );
+}
+
+/// A commit with one long, changed line of Rust.
+fn long_line_repo(words: usize) -> TestRepo {
+    let r = TestRepo::new();
+    r.commit_file("calc.rs", "fn total() -> u32 {\n    1\n}\n", "base");
+    r.git(&["checkout", "-q", "-b", "feature"]);
+    let sum = vec!["price"; words].join(" + ");
+    r.commit_file(
+        "calc.rs",
+        &format!("fn total() -> u32 {{\n    {sum} + TAIL\n}}\n"),
+        "long sum",
+    );
+    r
+}
+
+#[test]
+fn z_wraps_long_lines_for_the_session() {
+    let r = long_line_repo(20);
+    let mut h = Harness::in_memory(&r);
+    h.render(80, 24);
+    h.keys("j enter enter");
+    let cut = h.render(80, 24);
+    assert!(!cut.contains("TAIL"), "{cut}");
+    h.keys("z");
+    let wrapped = h.render(80, 24);
+    insta::assert_snapshot!("wrapped_80x24", wrapped);
+    assert!(wrapped.contains("TAIL"));
+    // Continuation rows: blank gutter, ↪, the line's indent.
+    assert!(
+        wrapped
+            .lines()
+            .any(|l| l.starts_with("         ↪     price")),
+        "{wrapped}"
+    );
+    // Nothing to scroll sideways.
+    h.keys("l");
+    assert_eq!(h.app.diff.as_ref().unwrap().hscroll, 0);
+    // It lasts for the session, not just this diff, and isn't saved.
+    h.keys("esc enter");
+    assert!(h.app.diff.as_ref().unwrap().wrap.is_some());
+    h.keys("z");
+    assert!(!h.render(80, 24).contains("TAIL"));
+    assert!(h.saved.is_empty());
+    assert!(h.render(120, 24).contains("z wrap"));
+    h.keys("z");
+    assert!(h.render(120, 24).contains("z no wrap"));
+}
+
+#[test]
+fn wrapped_lines_reflow_with_the_explorer() {
+    let r = long_line_repo(30);
+    let mut h = Harness::in_memory(&r);
+    h.render(160, 30);
+    h.keys("j enter enter z");
+    let wraps = |h: &Harness| {
+        let d = h.app.diff.as_ref().unwrap();
+        d.rows
+            .iter()
+            .filter(|r| matches!(r.kind, RowKind::Wrap(..)))
+            .count()
+    };
+    assert!(h.app.explorer_open);
+    let beside = wraps(&h);
+    h.keys("f");
+    assert!(!h.app.explorer_open);
+    assert!(wraps(&h) < beside, "more room, fewer rows");
+    assert!(h.render(160, 30).contains("TAIL"));
+    // A narrower terminal wraps into more rows.
+    h.render(70, 30);
+    assert!(wraps(&h) > beside);
 }

@@ -55,6 +55,11 @@ fn diff_hints(app: &App, d: &DiffView) -> Vec<Hint> {
     } else {
         h.push(hint("f", "files", 2));
     }
+    h.push(hint(
+        "z",
+        if d.wrap.is_some() { "no wrap" } else { "wrap" },
+        2,
+    ));
     h.push(hint("e", "edit", 2));
     if is_merge {
         h.push(hint("m", "merge diff mode", 2));
@@ -201,15 +206,6 @@ pub fn draw_drawer(f: &mut Frame, area: Rect, app: &mut App) {
     }
 }
 
-/// Columns before a line's `+`/`-` sign: both line numbers, or one space.
-fn gutter_width(app: &App, d: &DiffView) -> usize {
-    if app.config.line_numbers {
-        2 * d.gutter + 3
-    } else {
-        1
-    }
-}
-
 fn collapse_text(app: &App, file: &FileChange) -> String {
     let reason = file.collapse.map(|c| c.label()).unwrap_or("collapsed");
     format!(
@@ -234,7 +230,7 @@ fn render_row(app: &App, d: &DiffView, row: &Row, width: usize, tab: usize) -> L
     let file = &d.files[row.file];
     let gl = app.glyphs();
     // Notes and @@ lines start where code starts.
-    let indent = gutter_width(app, d) + 1;
+    let indent = d.gutter_cols(app.config.line_numbers) + 1;
     let note = |s: String| -> Line<'static> {
         Line::from(vec![
             Span::raw(" ".repeat(indent)),
@@ -313,64 +309,7 @@ fn render_row(app: &App, d: &DiffView, row: &Row, width: usize, tab: usize) -> L
                 Span::styled(text::truncate_end(&header, room), theme::hunk()),
             ])
         }
-        RowKind::Line(h, l) => {
-            let Some(p) = d.patches[row.file].as_ref() else {
-                return Line::default();
-            };
-            let line = &p.hunks[h].lines[l];
-            let pal = app.palette;
-            let num = |n: Option<u32>| match n {
-                Some(n) => format!("{n:>w$}", w = d.gutter),
-                None => " ".repeat(d.gutter),
-            };
-            let (sign, sign_style, row_bg, emph_bg) = match line.kind {
-                LineKind::Add => ("+", theme::add(), Some(pal.plus), Some(pal.plus_emph)),
-                LineKind::Del => ("-", theme::del(), Some(pal.minus), Some(pal.minus_emph)),
-                LineKind::Context => (" ", Style::new(), None, None),
-                LineKind::NoNewline => (" ", theme::dim(), None, None),
-            };
-            let base = row_bg.map_or(Style::new(), |bg| Style::new().bg(bg));
-            let gutter = if app.config.line_numbers {
-                format!(" {} {} ", num(line.old), num(line.new))
-            } else {
-                " ".into()
-            };
-            let mut spans = vec![
-                Span::styled(gutter, theme::dim()),
-                Span::styled(format!("{sign} "), sign_style.patch(base)),
-            ];
-            let room = width.saturating_sub(gutter_width(app, d) + 2);
-            let segs = if line.kind == LineKind::NoNewline {
-                text::slice(&text::segments(&line.text, tab), 0, room)
-            } else {
-                let runs = d
-                    .highlight(row.file)
-                    .filter(|_| app.config.syntax)
-                    .map(|hl| hl.line(h, l))
-                    .unwrap_or_default();
-                let emph: &[(u32, u32)] = if app.config.word_highlights {
-                    &line.emph
-                } else {
-                    &[]
-                };
-                let mut style_at = code_styler(&pal, base, runs, emph, emph_bg);
-                let segs = text::segments_with(&line.text, tab, &mut style_at);
-                text::slice(&segs, d.hscroll, room)
-            };
-            let base_text = if line.kind == LineKind::NoNewline {
-                theme::dim()
-            } else {
-                base
-            };
-            let body = styled_segs(segs, base_text, theme::dim());
-            let used = text::spans_width(&body);
-            spans.extend(body);
-            if row_bg.is_some() && used < room {
-                // Tint the whole row, not just the text.
-                spans.push(Span::styled(" ".repeat(room - used), base));
-            }
-            Line::from(spans)
-        }
+        RowKind::Line(..) | RowKind::Wrap(..) => code_row(app, d, row, width, tab),
         RowKind::Collapsed => note(collapse_text(app, file)),
         RowKind::Binary => note(binary_text(d, row)),
         RowKind::Loading => note("loading…".into()),
@@ -393,6 +332,103 @@ fn render_row(app: &App, d: &DiffView, row: &Row, width: usize, tab: usize) -> L
             .into(),
         ),
     }
+}
+
+/// A code line, or one row of it when it wraps: the gutter, the sign (or
+/// `↪` on continuation rows), then the code, tinted to the edge on added
+/// and deleted lines.
+fn code_row(app: &App, d: &DiffView, row: &Row, width: usize, tab: usize) -> Line<'static> {
+    let (h, l, part) = match row.kind {
+        RowKind::Line(h, l) => (h, l, 0),
+        RowKind::Wrap(h, l, part) => (h, l, part),
+        _ => return Line::default(),
+    };
+    let Some(p) = d.patches[row.file].as_ref() else {
+        return Line::default();
+    };
+    let line = &p.hunks[h].lines[l];
+    let pal = app.palette;
+    let line_numbers = app.config.line_numbers;
+    let num = |n: Option<u32>| match n {
+        Some(n) => format!("{n:>w$}", w = d.gutter),
+        None => " ".repeat(d.gutter),
+    };
+    let (sign, sign_style, row_bg, emph_bg) = match line.kind {
+        LineKind::Add => ("+", theme::add(), Some(pal.plus), Some(pal.plus_emph)),
+        LineKind::Del => ("-", theme::del(), Some(pal.minus), Some(pal.minus_emph)),
+        LineKind::Context => (" ", Style::new(), None, None),
+        LineKind::NoNewline => (" ", theme::dim(), None, None),
+    };
+    let base = row_bg.map_or(Style::new(), |bg| Style::new().bg(bg));
+    let (gutter, sign, sign_style) = if part > 0 {
+        let cols = d.gutter_cols(line_numbers);
+        (" ".repeat(cols), app.glyphs().wrap, theme::dim())
+    } else if line_numbers {
+        (
+            format!(" {} {} ", num(line.old), num(line.new)),
+            sign,
+            sign_style,
+        )
+    } else {
+        (" ".into(), sign, sign_style)
+    };
+    let mut spans = vec![
+        Span::styled(gutter, theme::dim()),
+        Span::styled(format!("{sign} "), sign_style.patch(base)),
+    ];
+    let room = d.code_width(width, line_numbers);
+    let wrapped = d.wraps.get(&(row.file, h, l));
+    let indent = wrapped.filter(|_| part > 0).map_or(0, |w| w.indent);
+    let segs = if line.kind == LineKind::NoNewline {
+        text::slice(&text::segments(&line.text, tab), 0, room)
+    } else {
+        let runs = d
+            .highlight(row.file)
+            .filter(|_| app.config.syntax)
+            .map(|hl| hl.line(h, l))
+            .unwrap_or_default();
+        let emph: &[(u32, u32)] = if app.config.word_highlights {
+            &line.emph
+        } else {
+            &[]
+        };
+        let mut style_at = code_styler(&pal, base, runs, emph, emph_bg);
+        match wrapped {
+            // Only this row's bytes, so a huge line isn't laid out again
+            // for every row it wraps into.
+            Some(w) => {
+                let (col, from) = if part == 0 {
+                    (0, 0)
+                } else {
+                    w.starts[part - 1]
+                };
+                let to = w.starts.get(part).map_or(line.text.len(), |&(_, b)| b);
+                let segs =
+                    text::segments_from(&line.text[from..to], tab, col, |off| style_at(from + off));
+                text::slice(&segs, 0, room.saturating_sub(indent))
+            }
+            None => {
+                let segs = text::segments_with(&line.text, tab, &mut style_at);
+                text::slice(&segs, d.hscroll, room)
+            }
+        }
+    };
+    let base_text = if line.kind == LineKind::NoNewline {
+        theme::dim()
+    } else {
+        base
+    };
+    if indent > 0 {
+        spans.push(Span::styled(" ".repeat(indent), base));
+    }
+    let body = styled_segs(segs, base_text, theme::dim());
+    let used = indent + text::spans_width(&body);
+    spans.extend(body);
+    if row_bg.is_some() && used < room {
+        // Tint the whole row, not just the text.
+        spans.push(Span::styled(" ".repeat(room - used), base));
+    }
+    Line::from(spans)
 }
 
 fn run_style(pal: &Palette, r: &Run) -> Style {

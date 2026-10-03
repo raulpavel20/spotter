@@ -1,6 +1,5 @@
 ---
 source: tests/diffview.rs
-assertion_line: 280
 expression: "h.render(100, 40)"
 ---
  59023f7 two hunks and a file · a.txt (1/2)                                            ● 0/2 viewed
@@ -42,4 +41,4 @@ expression: "h.render(100, 40)"
 
 
 ────────────────────────────────────────────────────────────────────────────────────────────────────
- ]/[ hunk · }/{ file · enter collapse · space viewed · f files · e edit · n/p commit · esc back
+ ]/[ hunk · }/{ file · enter collapse · space viewed · f files · z wrap · e edit · esc back

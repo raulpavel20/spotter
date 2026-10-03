@@ -15,11 +15,11 @@ expression: "h.render(80, 24)"
 │            │   Ignore whitespace changes ·················· off │            │
 │            │   Highlight changed words ····················· on │            │
 │            │   Line numbers ································ on │            │
+│            │   Wrap long lines ···························· off │            │
 │            │   Syntax highlighting ························ off │            │
 │            │   Tab width ···································· 4 │            │
 │            │   Collapse files above (lines) ·············· 1500 │            │
 │            │   Always-collapsed patterns ···················· — │            │
-│            │                                                    │            │
 │            ├────────────────────────────────────────────────────┤            │
 │            │ Show the file explorer when a diff opens (wide     │            │
 │            │ panes only).                                       │            │

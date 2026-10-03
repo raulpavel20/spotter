@@ -76,6 +76,7 @@ Spotter picks the base for you. On a feature branch it is the closest of `main`,
 | `Space` | Mark viewed (collapses it), go to the next unviewed file; on a viewed file, unmark it |
 | `f` | Show / hide the file explorer · `←` `→` or `Tab` move between it and the diff |
 | `W` | Hide whitespace-only changes for this session |
+| `z` | Wrap long lines, or cut them off again, for this session |
 | `m` | Merge commit: remerge-diff / first-parent diff |
 | `e` | Open your editor at the first change on screen |
 
@@ -105,6 +106,7 @@ git config spotter.base origin/develop   # the base exists only here, or as --ba
 | `diff.ignore_whitespace` | `spotter.ignoreWhitespace` | `false` |
 | `diff.word_highlights`: tint the words that changed | `spotter.wordHighlights` | `true` |
 | `diff.line_numbers` | `spotter.lineNumbers` | `true` |
+| `diff.wrap_lines`: diffs start with long lines wrapped (`z` toggles) | `spotter.wrapLines` | `false` |
 | `diff.syntax`: syntax highlighting | `spotter.syntax` | `true` |
 | `diff.tab_width` (1–16) | `spotter.tabWidth` | `4` |
 | `diff.collapse_lines`: files with more changed lines start collapsed | `spotter.collapseLines` | `1500` |

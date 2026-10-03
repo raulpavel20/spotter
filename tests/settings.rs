@@ -118,17 +118,74 @@ fn settings_screen_snapshot() {
 #[test]
 fn ascii_glyphs_replace_symbols() {
     let r = one_change();
-    let mut h = Harness::configured(&r, |c| c.ascii = true);
+    // A line long enough to wrap, so the continuation marker shows too.
+    r.commit_file("long.txt", &format!("{}\n", "word ".repeat(40)), "long");
+    let mut h = Harness::configured(&r, |c| {
+        c.ascii = true;
+        c.wrap_lines = true;
+    });
     for screen in [h.render(80, 24), {
         h.keys("j enter enter");
         h.render(120, 24)
     }] {
         let bad: Vec<char> = screen
             .chars()
-            .filter(|c| "◌●◐✓Σ▸▾─│┌┐└┘├┤✕⋯".contains(*c))
+            .filter(|c| "◌●◐✓Σ▸▾─│┌┐└┘├┤✕⋯↪".contains(*c))
             .collect();
         assert!(bad.is_empty(), "{bad:?} in\n{screen}");
     }
+    let d = h.app.diff.as_ref().unwrap();
+    assert!(d.rows.iter().any(|r| matches!(r.kind, RowKind::Wrap(..))));
+}
+
+fn long_line() -> TestRepo {
+    let r = TestRepo::new();
+    r.commit_file("seed.txt", "s\n", "base");
+    r.git(&["checkout", "-q", "-b", "feature"]);
+    r.commit_file("long.txt", &format!("{}TAIL\n", "word ".repeat(30)), "long");
+    r
+}
+
+fn wrapped(h: &Harness) -> bool {
+    h.app.diff.as_ref().unwrap().wrap.is_some()
+}
+
+#[test]
+fn wrap_setting_sets_the_start_and_wins_over_z() {
+    let r = long_line();
+    let mut h = Harness::configured(&r, |c| c.wrap_lines = true);
+    h.render(80, 24);
+    h.keys("j enter enter");
+    assert!(wrapped(&h));
+    assert!(h.render(80, 24).contains("TAIL"));
+    h.keys("z");
+    assert!(!wrapped(&h), "z turns it off for the session");
+    // Changing the setting afterwards wins over z.
+    select(&mut h, "diff.wrap_lines");
+    h.keys("l");
+    assert!(!h.app.config.wrap_lines);
+    h.keys("l esc");
+    assert!(h.app.config.wrap_lines);
+    assert!(wrapped(&h));
+    assert_eq!(
+        h.saved.last().unwrap(),
+        &("diff.wrap_lines", Some(Value::Bool(true)))
+    );
+}
+
+#[test]
+fn whitespace_setting_wins_over_w() {
+    let r = one_change();
+    let mut h = Harness::in_memory(&r);
+    h.keys("j enter enter W");
+    assert!(h.app.diff_opts().ignore_ws);
+    select(&mut h, "diff.ignore_whitespace");
+    h.keys("l l");
+    assert!(!h.app.config.ignore_whitespace);
+    assert!(
+        !h.app.diff_opts().ignore_ws,
+        "the setting, not the earlier W, decides"
+    );
 }
 
 #[test]

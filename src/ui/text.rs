@@ -36,14 +36,20 @@ pub fn segments(bytes: &[u8], tab: usize) -> Vec<Seg> {
 /// Like [`segments`], styling each character by its byte offset in
 /// `bytes` (so syntax and emphasis ranges line up even with tabs, escapes
 /// and invalid UTF-8).
-pub fn segments_with(
+pub fn segments_with(bytes: &[u8], tab: usize, style_at: impl FnMut(usize) -> Style) -> Vec<Seg> {
+    segments_from(bytes, tab, 0, style_at)
+}
+
+/// Like [`segments_with`] for a piece of a line that starts at display
+/// column `col`, so tabs still reach the line's tab stops.
+pub fn segments_from(
     bytes: &[u8],
     tab: usize,
+    mut col: usize,
     mut style_at: impl FnMut(usize) -> Style,
 ) -> Vec<Seg> {
     let tab = tab.max(1);
     let mut out: Vec<Seg> = Vec::new();
-    let mut col = 0usize;
     let push = |text: &str, style: Style, special: bool, out: &mut Vec<Seg>| match out.last_mut() {
         Some(last) if last.style == style && last.special == special => last.text.push_str(text),
         _ => out.push(Seg {
@@ -113,6 +119,84 @@ pub fn slice(segs: &[Seg], skip: usize, width: usize) -> Vec<Seg> {
 
 pub fn width(s: &str) -> usize {
     UnicodeWidthStr::width(s)
+}
+
+/// Columns a character takes at column `col`, as [`segments`] shows it.
+fn char_width(ch: char, col: usize, tab: usize) -> usize {
+    if ch == '\t' {
+        tab - col % tab
+    } else if is_control(ch) {
+        escape(ch).len()
+    } else {
+        ch.width().unwrap_or(0)
+    }
+}
+
+/// Where a wrapped line's rows start.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WrapLayout {
+    /// Each continuation row's start: display column and byte offset.
+    pub starts: Vec<(usize, usize)>,
+    /// Columns of indent before each continuation row, matching the
+    /// line's own indentation.
+    pub indent: usize,
+}
+
+/// Narrower than this, lines are not wrapped.
+pub const MIN_WRAP: usize = 8;
+
+/// How a line wraps into rows of `width` columns, or `None` if it fits.
+/// Rows break after a space in their second half, else at the edge; wide
+/// characters are never split. Continuation rows are indented like the
+/// line, up to half the width.
+pub fn wrap_points(bytes: &[u8], tab: usize, width: usize) -> Option<WrapLayout> {
+    let tab = tab.max(1);
+    if width < MIN_WRAP {
+        return None;
+    }
+    let mut col = 0;
+    let mut indent = None;
+    for ch in bytes.chars() {
+        if indent.is_none() && ch != ' ' && ch != '\t' {
+            indent = Some(col);
+        }
+        col += char_width(ch, col, tab);
+    }
+    if col <= width {
+        return None;
+    }
+    let indent = indent.unwrap_or(0).min(width / 2);
+    let mut out = WrapLayout {
+        starts: Vec::new(),
+        indent,
+    };
+    let (mut row_start, mut cap) = (0, width);
+    // Just after the last space in the current row, past the indentation.
+    let mut after_space: Option<(usize, usize)> = None;
+    let mut in_text = false;
+    let mut col = 0;
+    for (start, end, ch) in bytes.char_indices() {
+        let w = char_width(ch, col, tab);
+        while col + w - row_start > cap && col > row_start {
+            let at = match after_space {
+                Some((c, b)) if c - row_start >= cap / 2 => (c, b),
+                _ => (col, start),
+            };
+            out.starts.push(at);
+            row_start = at.0;
+            cap = width - indent;
+            after_space = None;
+        }
+        if ch == ' ' || ch == '\t' {
+            if in_text {
+                after_space = Some((col + w, end));
+            }
+        } else {
+            in_text = true;
+        }
+        col += w;
+    }
+    Some(out)
 }
 
 /// Lossy, escaped, single-line display form of a path.
@@ -284,6 +368,61 @@ mod tests {
         assert_eq!(joined(&slice(&s, 0, 3)), "ab ");
         assert_eq!(joined(&slice(&s, 3, 4)), " 本c");
         assert_eq!(joined(&slice(&s, 2, 2)), "日");
+    }
+
+    /// The rows of a wrapped line, continuation rows indented.
+    fn wrapped(s: &str, width: usize) -> Vec<String> {
+        let Some(w) = wrap_points(s.as_bytes(), 4, width) else {
+            return vec![s.to_owned()];
+        };
+        let mut bounds: Vec<usize> = w.starts.iter().map(|&(_, b)| b).collect();
+        bounds.insert(0, 0);
+        bounds.push(s.len());
+        bounds
+            .windows(2)
+            .enumerate()
+            .map(|(i, r)| {
+                let pad = if i == 0 { 0 } else { w.indent };
+                format!("{}{}", " ".repeat(pad), &s[r[0]..r[1]])
+            })
+            .collect()
+    }
+
+    #[test]
+    fn wraps_at_spaces_or_the_edge() {
+        assert_eq!(wrapped("short line", 20), ["short line"]);
+        assert_eq!(
+            wrapped("let total = price * quantity;", 16),
+            ["let total = ", "price * ", "quantity;"]
+        );
+        // No space in the second half of the row: break at the edge.
+        assert_eq!(
+            wrapped("call(aVeryLongArgumentName)", 10),
+            ["call(aVery", "LongArgume", "ntName)"]
+        );
+        // Too narrow to wrap at all.
+        assert_eq!(wrap_points(b"abcdefghij", 4, 7), None);
+    }
+
+    #[test]
+    fn continuation_rows_keep_the_indent() {
+        assert_eq!(
+            wrapped("    return apply(total, percent);", 20),
+            ["    return ", "    apply(total, ", "    percent);"]
+        );
+        // Tabs count to their tab stop; the indent is capped at half.
+        let w = wrap_points(b"\t\t\tx = 1 + 2 + 3", 4, 16).unwrap();
+        assert_eq!(w.indent, 8);
+        assert_eq!(w.starts, [(16, 7), (24, 15)]);
+    }
+
+    #[test]
+    fn wide_characters_move_to_the_next_row() {
+        let w = wrap_points("abcdefg日本".as_bytes(), 4, 8).unwrap();
+        // 日 would straddle the edge, so the row breaks before it.
+        assert_eq!(w.starts, [(7, 7)]);
+        let segs = segments_from("日本".as_bytes(), 4, 7, |_| Style::new());
+        assert_eq!(joined(&segs), "日本");
     }
 
     #[test]

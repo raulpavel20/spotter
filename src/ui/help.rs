@@ -35,7 +35,8 @@ const DIFF: &[(&str, &str)] = &[
     ("f · ←/tab", "file explorer · move into it (→ back)"),
     ("enter", "collapse / expand the file at the top"),
     ("space", "viewed (collapses) + next · again: unview"),
-    ("h / l · W", "scroll left / right · hide whitespace changes"),
+    ("h / l · z", "scroll left / right · wrap long lines"),
+    ("W", "hide whitespace changes"),
     ("e", "open editor at the first change on screen"),
 ];
 
