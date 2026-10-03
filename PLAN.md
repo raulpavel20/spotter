@@ -110,10 +110,36 @@ The Σ row is pinned to the bottom of the timeline panel and stays visible regar
        12 +    label.tooltip_text = item.description
   12   13      add_child(label)
 ────────────────────────────────────────────────────────────────────────────
- ]/[ hunk · }/{ file · space viewed+next · n/p commit · e edit · esc back
+ ]/[ hunk · }/{ file · f files · space viewed · n/p commit · e edit · esc back
 ```
 
 The diff view shows the **whole target** as one continuous scroll with a header per file, like GitHub's "Files changed" tab. Opening a file jumps to its header, which covers both "diff of a commit" and "diff of one file".
+
+**Scrolling is pager-style.** `j`/`k` move the page; there is no line cursor.
+- The **current file** is the one at the top of the screen. Once its header scrolls off, a copy is pinned to the top line.
+- The header line, the explorer, `Space` and `e` all act on the current file.
+
+**Layout:**
+- A rule separates files, and every hunk after a file's first has a blank line above its `@@` line.
+- File headers show `▾` (open) or `▸` (collapsed).
+- **Collapsed files** show only their header line. Viewed files collapse automatically, dimmed, and so do lockfiles and generated files, which add a one-line reason. `Enter` collapses or expands the current file.
+
+**Colors.**
+- Code is syntax-highlighted.
+- `-`/`+` rows get a dim red/green background tint, and the words that changed within a modified line get a stronger tint, like delta or GitHub.
+- The `+`/`-` sign stays red/green text.
+
+**File explorer.** `f` opens the target's file list inside the diff view, with the same rows as the files panel.
+- **Wide panes:** it is a side panel left of the diff that stays open.
+- **Narrow panes:** it is a drawer over the diff that closes once a file is picked.
+
+```
+┌ Files · 1/3 viewed ──┐ M src/tooltip.gd                  +28 -8
+│✓ A  assets/theme.tres│ @@ -10,7 +10,12 @@ func _ready():
+│▸ M  src/tooltip.gd   │  10   10      var label = Label.new()
+│  M  src/inventory.gd │  11      -    label.text = item.name
+└──────────────────────┘       11 +    label.text = item.display_name
+```
 
 ### Header and glyphs
 
@@ -155,14 +181,26 @@ The diff view shows the **whole target** as one continuous scroll with a header 
 
 | Key | Action |
 |---|---|
-| `j` / `k`, `Ctrl-D` / `Ctrl-U`, `g` / `G` | Scroll |
+| `j` / `k`, `Ctrl-D` / `Ctrl-U`, `PgDn` / `PgUp`, `g` / `G` | Scroll the page |
 | `]` / `[` | Next / previous hunk |
 | `}` / `{` | Next / previous file |
 | `h` / `l` | Horizontal scroll |
-| `Space` | Mark the current file viewed and jump to the next unviewed file, continuing into the next commit |
-| `Enter` | Expand a collapsed file |
+| `Space` | Mark the current file viewed (it collapses) and jump to the next unviewed file, continuing into the next commit. On a viewed file: unmark it (it expands) |
+| `Enter` | Collapse / expand the current file |
 | `m` | Merge commit: toggle remerge-diff / first-parent |
-| `e` | Open the editor at the line under the cursor |
+| `e` | Open the editor at the current file's first changed line on screen |
+| `f` | Toggle the file explorer (opening it focuses it) |
+| `Tab` | Switch focus between the explorer and the diff |
+
+**File explorer** (while it has focus)
+
+| Key | Action |
+|---|---|
+| `j` / `k`, `g` / `G` | Move to another file; the diff follows immediately |
+| `Enter` | Back to the diff, expanding the file if collapsed (a narrow drawer closes) |
+| `Space` | Toggle viewed (viewed files collapse) |
+| `Esc` / `q` | Back to the diff (a narrow drawer closes) |
+| other keys | As in the diff view (`n`/`p`, `w`/`b`, `u`, …) |
 
 **The review loop:** press `u`, then `Enter`, then read and press `Space`, `Space`, `Space`… When the agent commits again, the new commit appears as `●` and the header count goes up. Files you already viewed in ◌ Uncommitted stay viewed after the agent commits the same content (§6.3).
 
@@ -255,6 +293,20 @@ The diff view shows the **whole target** as one continuous scroll with a header 
 - **Mode changes, symlinks, submodules** (`--submodule=short`): one-line entries.
 - **Merge commits:** remerge-diff by default, which shows only what was decided during the merge (conflict resolutions and "evil" changes) and is usually tiny or empty. It needs git ≥ 2.36; older git falls back to first-parent.
 - **Display:** tabs expand to 4 columns (`spotter.tabWidth`), widths use `unicode-width`, control characters are escaped, lines don't wrap (horizontal scroll instead), and the "no newline at end of file" marker is shown.
+- **Changed words:** within a hunk, each run of `-` lines followed by a run of `+` lines is paired line by line.
+  - Lines are split into word, whitespace and punctuation tokens and diffed (Myers, via `similar`).
+  - The differing tokens are emphasized.
+  - Pairs sharing less than 40% of their non-whitespace bytes count as rewrites and get no word emphasis. So do lines over 1,000 bytes.
+- **Syntax highlighting:** syntect with bat's grammars and themes (via `two-face`, so GDScript, TOML and TypeScript are included).
+  - Like delta, the old side reads context and `-` lines and the new side reads context and `+` lines. Parser state carries across the hunks of a file.
+  - It runs on its own thread for the files in or just below the viewport. Results are cached by content key `(old, new, path)`, so unchanged files keep their colors across reloads.
+  - Plain text shows first; colors follow.
+  - Lines over 2,000 bytes aren't highlighted.
+- **Colors:**
+  - Truecolor when `COLORTERM` says so; otherwise 256 colors, with hand-picked tints.
+  - Dark or light from `spotter.theme` (`auto` reads `COLORFGBG` and defaults to dark). The terminal is never queried.
+  - Syntax theme: `spotter.syntaxTheme`, default Monokai Extended on dark and GitHub on light. `ansi` follows the terminal palette.
+  - `spotter.syntax=false` turns highlighting off; tints and changed words stay.
 
 ### 6.5 History rewrites and repository states
 
@@ -266,7 +318,7 @@ The diff view shows the **whole target** as one continuous scroll with a header 
 
 **Which line**
 
-- In the diff view: the new-side line under the cursor.
+- In the diff view: the current file's first changed line on screen (else its first code line on screen).
 - In the file list: the first changed line.
 
 **Which command**
@@ -319,8 +371,8 @@ Every git invocation goes through one function, `git::run`, which enforces the f
 **Stack**
 
 - Rust stable with `ratatui` and `crossterm`.
-- Libraries: `notify`, `ignore`, `clap`, `serde`/`serde_json`, `unicode-width`, `bstr`, `anyhow`.
-- Dev dependencies: `insta`, `tempfile`. Optional: `ansi-to-tui` for the delta renderer.
+- Libraries: `notify`, `ignore`, `clap`, `serde`/`serde_json`, `unicode-width`, `bstr`, `anyhow`, `syntect` + `two-face` (highlighting), `similar` (changed words).
+- Dev dependencies: `insta`, `tempfile`.
 - No async runtime: std threads and channels.
 
 ```
@@ -341,18 +393,20 @@ src/
   watch.rs       gitignore-aware watcher + polling fallback
   review.rs      viewed-marks store
   editor.rs      editor templates, suspend/resume
+  worddiff.rs    changed-word emphasis within modified lines
+  highlight.rs   syntax highlighting (syntect + two-face), its thread and cache
+  ui/explorer.rs file explorer inside the diff view; ui/palette.rs diff colors
   config.rs      CLI flags + `git config --get-regexp '^spotter\.'`
 ```
 
 - **Event loop.** The main thread owns the terminal and draws from `App` state. It receives `Msg`s from one channel fed by the input, watcher and worker threads.
 - **Caching.** Commit file lists and patches never change, so they are cached by SHA (LRU by size). Only ◌ and Σ are volatile.
-- **Configuration.** Settings live in git config (`spotter.base`, `spotter.editor`, `spotter.editorGui`, `spotter.collapse`, `spotter.tabWidth`, `spotter.trunkDepth`), per repo or global. There is no new config file.
+- **Configuration.** Settings live in git config (`spotter.base`, `spotter.editor`, `spotter.editorGui`, `spotter.collapse`, `spotter.tabWidth`, `spotter.trunkDepth`, `spotter.syntax`, `spotter.theme`, `spotter.syntaxTheme`), per repo or global. There is no new config file.
 
 ```
 spotter [PATH]                # defaults to the current directory
   --base <ref>                # override base resolution
   --no-watch                  # poll instead of watching
-  --renderer builtin|delta    # M7
 ```
 
 - **Packaging.** The crate is published as `spotter-tui`, because plain `spotter` is taken on crates.io. The binary is `spotter`. An optional `git-spotter` alias makes `git spotter` work too.
@@ -372,7 +426,8 @@ Each milestone ends in something usable and tested.
 | **M4 Live** | Gitignore-aware watcher, debounce, two refresh kinds, generations, polling fallback, selection stability, toasts, in-progress banners | A script that commits, amends, rebases and edits in a loop: the view converges within 1 s, and `.git/index` is never touched by Spotter |
 | **M5 Viewed marks** | Store, `Space`/`r`/`u`, glyphs, header count, `Space`-advance in the diff view | View a file in ◌, commit it with plain git, and the commit shows that file ✓ |
 | **M6 Editor + help** | `e` with templates, suspend/resume, GUI detection, `?` overlay | Manual check with nvim and VS Code |
-| **M7 Delta (optional)** | Spike: render each file via `delta --paging=never --width <cols>` and convert with `ansi-to-tui`; per-file runs keep file navigation, hunk navigation is best-effort | Decide to keep or drop after the spike |
+| ~~**M7 Delta (optional)**~~ | Dropped: built-in highlighting (M8) gives the same colors without losing line structure | — |
+| **M8 Diff viewer** | Syntax highlighting, changed-word tints, file explorer (side panel / drawer) | Tints, word emphasis and syntax colors verified on rendered cells; explorer navigation tested wide and narrow |
 
 **The MVP is done** once it has been used daily beside an agent for a week, and every rough edge found has been fixed or explicitly deferred.
 
@@ -409,7 +464,6 @@ Each milestone ends in something usable and tested.
 - **Multi-worktree dashboard.** One section per worktree/branch, for watching several parallel agents. This is the most promising direction after the MVP.
 - **"Since last review" diff:** one combined diff of everything not yet viewed.
 - Search and filter for commits and files.
-- Built-in syntax highlighting (syntect or tree-sitter) and word-level intra-line highlights.
 - Side-by-side mode and a line-wrap toggle.
 - A staged vs unstaged split view for ◌.
 - Test/build status per commit.

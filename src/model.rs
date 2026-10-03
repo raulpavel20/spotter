@@ -186,6 +186,8 @@ pub struct Line {
     pub old: Option<u32>,
     pub new: Option<u32>,
     pub text: BString,
+    /// Byte ranges of changed words (see `worddiff`).
+    pub emph: Vec<(u32, u32)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

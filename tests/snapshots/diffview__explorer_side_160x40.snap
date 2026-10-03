@@ -1,0 +1,44 @@
+---
+source: tests/diffview.rs
+expression: "h.render(160, 40)"
+---
+ 014ef17 three files · alpha.rs (1/3)                                                                                                              ● 0/3 viewed
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+┌ Files · 0/3 viewed ──────────────────────────┐ ▾   A alpha.rs                                                                                             +30
+│▸  A  alpha.rs                           +30  │          @@ -0,0 +1,30 @@
+│   A  beta.rs                            +30  │       1 + // alpha.rs line 0
+│   A  gamma.rs                           +30  │       2 + // alpha.rs line 1
+│                                              │       3 + // alpha.rs line 2
+│                                              │       4 + // alpha.rs line 3
+│                                              │       5 + // alpha.rs line 4
+│                                              │       6 + // alpha.rs line 5
+│                                              │       7 + // alpha.rs line 6
+│                                              │       8 + // alpha.rs line 7
+│                                              │       9 + // alpha.rs line 8
+│                                              │      10 + // alpha.rs line 9
+│                                              │      11 + // alpha.rs line 10
+│                                              │      12 + // alpha.rs line 11
+│                                              │      13 + // alpha.rs line 12
+│                                              │      14 + // alpha.rs line 13
+│                                              │      15 + // alpha.rs line 14
+│                                              │      16 + // alpha.rs line 15
+│                                              │      17 + // alpha.rs line 16
+│                                              │      18 + // alpha.rs line 17
+│                                              │      19 + // alpha.rs line 18
+│                                              │      20 + // alpha.rs line 19
+│                                              │      21 + // alpha.rs line 20
+│                                              │      22 + // alpha.rs line 21
+│                                              │      23 + // alpha.rs line 22
+│                                              │      24 + // alpha.rs line 23
+│                                              │      25 + // alpha.rs line 24
+│                                              │      26 + // alpha.rs line 25
+│                                              │      27 + // alpha.rs line 26
+│                                              │      28 + // alpha.rs line 27
+│                                              │      29 + // alpha.rs line 28
+│                                              │      30 + // alpha.rs line 29
+│                                              │────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+│                                              │ ▾   A beta.rs                                                                                              +30
+│                                              │          @@ -0,0 +1,30 @@
+└──────────────────────────────────────────────┘       1 + // beta.rs line 0
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ enter go to file · space viewed · tab diff · f close

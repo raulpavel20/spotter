@@ -42,6 +42,11 @@ pub fn toast() -> Style {
     Style::new().add_modifier(Modifier::BOLD)
 }
 
+/// The file header pinned to the top of the diff.
+pub fn sticky() -> Style {
+    Style::new().add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+}
+
 /// The cursor row of the focused panel.
 pub fn cursor() -> Style {
     Style::new().add_modifier(Modifier::REVERSED)

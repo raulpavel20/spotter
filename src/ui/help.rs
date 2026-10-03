@@ -29,14 +29,14 @@ const PANELS: &[(&str, &str)] = &[
 ];
 
 const DIFF: &[(&str, &str)] = &[
-    ("j / k", "move · ctrl-d / ctrl-u half page"),
-    ("g / G", "top / bottom"),
+    ("j/k g/G", "scroll, top/bottom · ctrl-d/u half page"),
     ("] / [", "next / previous hunk"),
     ("} / {", "next / previous file"),
+    ("f · tab", "file explorer · switch focus to it"),
+    ("enter", "collapse / expand the file at the top"),
+    ("space", "viewed (collapses) + next · again: unview"),
     ("h / l", "scroll left / right"),
-    ("space", "mark viewed, go to next unviewed file"),
-    ("enter", "expand / collapse file"),
-    ("e", "open editor at the cursor line"),
+    ("e", "open editor at the first change on screen"),
 ];
 
 fn section(lines: &mut Vec<Line<'static>>, title: &str, keys: &[(&str, &str)]) {

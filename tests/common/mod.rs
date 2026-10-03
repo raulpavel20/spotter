@@ -231,6 +231,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use spotter::app::App;
+use spotter::highlight::Highlighter;
 use spotter::msg::{EditRequest, Effect, Msg, RefreshKind, WatchStatus};
 use spotter::review::Marks;
 use spotter::worker::Worker;
@@ -239,6 +240,12 @@ pub const NOW: i64 = 1_800_000_000;
 
 fn fixed_now() -> i64 {
     NOW
+}
+
+/// One highlighter per test binary: loading grammars takes a moment.
+pub fn highlighter() -> &'static Highlighter {
+    static HL: std::sync::OnceLock<Highlighter> = std::sync::OnceLock::new();
+    HL.get_or_init(|| Highlighter::new(two_face::theme::EmbeddedThemeName::MonokaiExtended))
 }
 
 /// Runs the App's effects in place of the worker thread.
@@ -301,6 +308,17 @@ impl Harness {
                         result: refresh::load_file(&self.repo, &spec, &file)
                             .map_err(|e| e.to_string()),
                     }),
+                    Effect::Highlight {
+                        index,
+                        key,
+                        path,
+                        patch,
+                        ..
+                    } => Some(Msg::Highlighted {
+                        index,
+                        key,
+                        hl: std::sync::Arc::new(highlighter().highlight(&path, &patch)),
+                    }),
                     Effect::SaveMarks => {
                         self.app.marks.save(NOW).unwrap();
                         None
@@ -319,6 +337,12 @@ impl Harness {
         }
     }
 
+    /// Turns syntax highlighting on (it is off by default in tests).
+    pub fn with_syntax(mut self) -> Self {
+        self.app.syntax = true;
+        self
+    }
+
     pub fn send(&mut self, msg: Msg) {
         let fx = self.app.update(msg);
         self.run(fx);
@@ -334,6 +358,7 @@ impl Harness {
                 "space" => (KeyCode::Char(' '), KeyModifiers::NONE),
                 "down" => (KeyCode::Down, KeyModifiers::NONE),
                 "pgdn" => (KeyCode::PageDown, KeyModifiers::NONE),
+                "backtab" => (KeyCode::BackTab, KeyModifiers::SHIFT),
                 s if s.starts_with("ctrl-") => (
                     KeyCode::Char(s.chars().last().unwrap()),
                     KeyModifiers::CONTROL,
@@ -349,10 +374,8 @@ impl Harness {
     }
 
     pub fn render(&mut self, w: u16, h: u16) -> String {
-        self.send(Msg::Resize(w, h));
-        let mut t = Terminal::new(TestBackend::new(w, h)).unwrap();
-        t.draw(|f| spotter::ui::draw(f, &mut self.app)).unwrap();
-        let buf = t.backend().buffer();
+        let buf = self.render_buffer(w, h);
+        let buf = &buf;
         let mut out = String::new();
         for y in 0..h {
             let mut line = String::new();
@@ -363,5 +386,14 @@ impl Harness {
             out.push('\n');
         }
         out
+    }
+
+    /// The rendered cells, for checking colors.
+    pub fn render_buffer(&mut self, w: u16, h: u16) -> ratatui::buffer::Buffer {
+        self.send(Msg::Resize(w, h));
+        let mut t = Terminal::new(TestBackend::new(w, h)).unwrap();
+        t.draw(|f| spotter::ui::draw(f, &mut self.app)).unwrap();
+        // Drawing can request highlighting of newly visible files.
+        t.backend().buffer().clone()
     }
 }

@@ -134,6 +134,7 @@ pub fn parse_patch(out: &[u8]) -> Vec<FilePatch> {
                     old,
                     new,
                     text: BString::from(text),
+                    emph: Vec::new(),
                 });
                 continue;
             }
@@ -238,6 +239,7 @@ pub fn untracked_patch(f: &FileChange, content: &[u8]) -> FilePatch {
                 old: None,
                 new: Some(i as u32 + 1),
                 text: BString::from(l),
+                emph: Vec::new(),
             });
         }
     }
@@ -248,6 +250,7 @@ pub fn untracked_patch(f: &FileChange, content: &[u8]) -> FilePatch {
             old: None,
             new: None,
             text: BString::from("\\ No newline at end of file"),
+            emph: Vec::new(),
         });
     }
     let hunks = if n == 0 {

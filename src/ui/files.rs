@@ -80,53 +80,91 @@ pub fn draw(f: &mut Frame, area: Rect, app: &mut App, wide: bool) {
         return;
     }
     let h = inner.height as usize;
-    if app.file_sel < app.files_offset {
-        app.files_offset = app.file_sel;
-    } else if app.file_sel >= app.files_offset + h {
-        app.files_offset = app.file_sel + 1 - h;
-    }
-    app.files_offset = app.files_offset.min(files.len().saturating_sub(h));
+    app.files_offset = keep_visible(app.file_sel, app.files_offset, h, files.len());
+    let lines = file_lines(
+        app,
+        &files,
+        app.file_sel,
+        app.files_offset,
+        h,
+        inner.width as usize,
+        focused,
+    );
+    f.render_widget(Paragraph::new(lines), inner);
+}
 
+/// The scroll offset that keeps `sel` inside a window of `h` rows.
+pub fn keep_visible(sel: usize, offset: usize, h: usize, len: usize) -> usize {
+    let h = h.max(1);
+    let offset = if sel < offset {
+        sel
+    } else if sel >= offset + h {
+        sel + 1 - h
+    } else {
+        offset
+    };
+    offset.min(len.saturating_sub(h))
+}
+
+/// Below this width a file row drops its stats and kind suffix.
+const COMPACT: usize = 34;
+
+/// One row per file: cursor, ✓, status letter, path (truncated from the
+/// left so the file name stays visible), kind suffix and stats. Shared by
+/// the files panel and the diff view's explorer.
+pub fn file_lines(
+    app: &App,
+    files: &[FileChange],
+    sel: usize,
+    offset: usize,
+    height: usize,
+    width: usize,
+    focused: bool,
+) -> Vec<Line<'static>> {
+    let compact = width < COMPACT;
     let stats: Vec<Stats> = files
         .iter()
         .map(|f| Stats::of(std::slice::from_ref(f)))
         .collect();
     let cols = StatCols::new(stats.iter());
-    let width = inner.width as usize;
-    let lines: Vec<Line<'static>> = files
+    files
         .iter()
         .enumerate()
-        .skip(app.files_offset)
-        .take(h)
+        .skip(offset)
+        .take(height)
         .map(|(i, file)| {
-            let selected = i == app.file_sel;
+            let selected = i == sel;
             let viewed = app.is_viewed(file);
             let mut left = vec![
                 Span::raw(if selected { "▸" } else { " " }),
                 Span::styled(if viewed { "✓ " } else { "  " }, theme::viewed()),
                 Span::styled(
-                    format!("{}  ", file.status.letter()),
+                    format!(
+                        "{}{}",
+                        file.status.letter(),
+                        if compact { " " } else { "  " }
+                    ),
                     theme::status(file.status),
                 ),
             ];
             let mut right = Vec::new();
-            if let Some(sfx) = suffix(file, true) {
-                right.push(Span::styled(sfx, theme::dim()));
-                right.push(Span::raw("  "));
+            if !compact {
+                if let Some(sfx) = suffix(file, true) {
+                    right.push(Span::styled(sfx, theme::dim()));
+                    right.push(Span::raw("  "));
+                }
+                if file.is_binary() {
+                    right.push(Span::styled("binary", theme::dim()));
+                } else {
+                    right.extend(cols.spans(&stats[i]));
+                }
+                right.push(Span::raw(" "));
             }
-            if file.is_binary() {
-                right.push(Span::styled("binary", theme::dim()));
-            } else {
-                right.extend(cols.spans(&stats[i]));
-            }
-            right.push(Span::raw(" "));
-            // Paths are truncated from the left so the file name stays visible.
             let lw = text::spans_width(&left);
             let rw = text::spans_width(&right);
-            let room = width.saturating_sub(lw + rw + 1);
+            let room = width.saturating_sub(lw + rw + usize::from(!compact));
             left.push(Span::raw(text::truncate_start(&path_label(file), room)));
             style_row(left_right(left, right, width), selected, focused)
         })
-        .collect();
-    f.render_widget(Paragraph::new(lines), inner);
+        .collect()
 }

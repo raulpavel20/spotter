@@ -13,8 +13,10 @@ use spotter::app::App;
 use spotter::config::{Args, Config};
 use spotter::editor::{self, Prepared};
 use spotter::git::Repo;
+use spotter::highlight::{self, HlRequest};
 use spotter::msg::{Effect, Msg, RefreshKind, WatchStatus};
 use spotter::review::{self, Marks};
+use spotter::ui::palette::Palette;
 use spotter::worker::{self, Request};
 use spotter::{term, ui, watch};
 
@@ -113,6 +115,17 @@ fn run(repo: Repo, args: Args) -> anyhow::Result<()> {
         status,
     );
     app.tab_width = cfg.tab_width;
+    let env = |k: &str| std::env::var(k).ok();
+    app.palette = Palette::detect(
+        cfg.theme.as_deref(),
+        env("COLORTERM").as_deref(),
+        env("COLORFGBG").as_deref(),
+    );
+    app.syntax = cfg.syntax;
+    let highlighter = cfg.syntax.then(|| {
+        let theme = highlight::theme_name(cfg.syntax_theme.as_deref(), app.palette.background);
+        highlight::spawn(theme, tx.clone())
+    });
 
     let mut terminal = term::init().context("terminal setup")?;
     if std::env::var_os("SPOTTER_TEST_PANIC").is_some() {
@@ -153,6 +166,23 @@ fn run(repo: Repo, args: Args) -> anyhow::Result<()> {
                             spec,
                             file,
                         });
+                    }
+                    Effect::Highlight {
+                        seq,
+                        index,
+                        key,
+                        path,
+                        patch,
+                    } => {
+                        if let Some(h) = &highlighter {
+                            let _ = h.send(HlRequest {
+                                seq,
+                                index,
+                                key,
+                                path,
+                                patch,
+                            });
+                        }
                     }
                     Effect::SaveMarks => {
                         if let Err(e) = app.marks.save(review::now()) {
@@ -212,7 +242,12 @@ fn run(repo: Repo, args: Args) -> anyhow::Result<()> {
             last_tick = Instant::now();
             let had_toast = app.toast.is_some();
             effects.extend(app.update(Msg::Tick));
-            if app.marks.reload_if_changed() || had_toast != app.toast.is_some() {
+            if app.marks.reload_if_changed() {
+                // Another instance changed marks: viewed files fold.
+                app.sync_viewed();
+                dirty = true;
+            }
+            if had_toast != app.toast.is_some() {
                 dirty = true;
             }
         }

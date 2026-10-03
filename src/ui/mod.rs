@@ -2,9 +2,11 @@
 //! state it touches is scroll offsets that keep the cursor visible.
 
 pub mod diff;
+pub mod explorer;
 pub mod files;
 pub mod header;
 pub mod help;
+pub mod palette;
 pub mod text;
 pub mod theme;
 pub mod timeline;
@@ -21,6 +23,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     let area = f.area();
     if app.diff.is_some() {
         diff::draw(f, area, app);
+        diff::draw_drawer(f, area, app);
     } else {
         draw_main(f, area, app);
     }

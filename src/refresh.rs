@@ -624,6 +624,7 @@ pub fn load_patch(
             attached.next().flatten().unwrap_or_else(|| empty_patch(f))
         };
         fill_sizes(repo, spec, f, &mut p);
+        crate::worddiff::annotate(&mut p);
         patches.push(Some(p));
     }
     Ok(LoadedPatch {
@@ -649,6 +650,7 @@ pub fn load_file(repo: &Repo, spec: &DiffSpec, f: &FileChange) -> Result<FilePat
             .unwrap_or_else(|| empty_patch(f))
     };
     fill_sizes(repo, spec, f, &mut p);
+    crate::worddiff::annotate(&mut p);
     Ok(p)
 }
 

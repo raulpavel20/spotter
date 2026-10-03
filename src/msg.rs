@@ -1,8 +1,12 @@
 //! Messages into the app, and effects out of it.
 
+use std::sync::Arc;
+
+use bstr::BString;
 use crossterm::event::KeyEvent;
 
 use crate::git::diff::DiffSpec;
+use crate::highlight::FileHighlight;
 use crate::model::{FileChange, FilePatch};
 use crate::refresh::{LoadedPatch, RefreshOpts, Snapshot};
 
@@ -41,6 +45,12 @@ pub enum Msg {
         index: usize,
         result: Result<FilePatch, String>,
     },
+    /// Syntax colors for one file, keyed by its content key.
+    Highlighted {
+        index: usize,
+        key: String,
+        hl: Arc<FileHighlight>,
+    },
     /// Every 250 ms.
     Tick,
 }
@@ -73,6 +83,14 @@ pub enum Effect {
         index: usize,
         spec: DiffSpec,
         file: FileChange,
+    },
+    /// Syntax-highlight one loaded file of the open diff.
+    Highlight {
+        seq: u64,
+        index: usize,
+        key: String,
+        path: BString,
+        patch: FilePatch,
     },
     SaveMarks,
     OpenEditor(EditRequest),

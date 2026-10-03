@@ -4,11 +4,7 @@ expression: "h.render(160, 48)"
 ---
  aa31857 Add tooltips · src/tooltip.gd (2/2)                                                                                                       ● 0/2 viewed
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-   A assets/theme.tres                                                                                                                                       +1
-          @@ -0,0 +1 @@
-       1 + [gd_resource type="Theme"]
-
-▸  A src/tooltip.gd                                                                                                                                          +6
+ ▾   A src/tooltip.gd                                                                                                                                        +6
           @@ -0,0 +1,6 @@
        1 + extends Control
        2 +
@@ -48,5 +44,9 @@ expression: "h.render(160, 48)"
 
 
 
+
+
+
+
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- ]/[ hunk · }/{ file · space viewed+next · n/p commit · e edit · esc back
+ ]/[ hunk · }/{ file · f files · space viewed · n/p commit · e edit · esc back

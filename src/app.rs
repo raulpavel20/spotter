@@ -9,6 +9,7 @@ use crate::model::{Commit, FileChange, Status, TargetId};
 use crate::msg::{EditRequest, Effect, Msg, RefreshKind, WatchStatus};
 use crate::refresh::{HeadChange, RefreshOpts, Snapshot};
 use crate::review::{self, Marks};
+use crate::ui::palette::Palette;
 
 /// Toasts last 3 s; polling runs every 2 s (in 250 ms ticks).
 pub const TOAST_TICKS: u32 = 12;
@@ -18,6 +19,13 @@ pub const POLL_TICKS: u32 = 8;
 pub enum Focus {
     Timeline,
     Files,
+}
+
+/// Focus inside the diff view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiffFocus {
+    Diff,
+    Explorer,
 }
 
 /// Review state of a set of files.
@@ -66,6 +74,12 @@ pub struct App {
     pub help: bool,
     pub size: (u16, u16),
     pub tab_width: usize,
+    /// Request syntax highlighting for diff files.
+    pub syntax: bool,
+    pub palette: Palette,
+    /// The file explorer in the diff view (remembered for the session).
+    pub explorer_open: bool,
+    pub diff_focus: DiffFocus,
     seq: u64,
     applied_gen: u64,
     patch_gen: u64,
@@ -103,6 +117,10 @@ impl App {
             help: false,
             size: (80, 24),
             tab_width: 4,
+            syntax: false,
+            palette: Palette::default(),
+            explorer_open: false,
+            diff_focus: DiffFocus::Diff,
             seq: 0,
             applied_gen: 0,
             patch_gen: 0,
@@ -219,6 +237,13 @@ impl App {
     // --- update -----------------------------------------------------------
 
     pub fn update(&mut self, msg: Msg) -> Vec<Effect> {
+        let fx = self.handle(msg);
+        // Marks may have changed (keys, reloads); viewed files fold.
+        self.sync_viewed();
+        fx
+    }
+
+    fn handle(&mut self, msg: Msg) -> Vec<Effect> {
         match msg {
             Msg::Key(k) => {
                 if k.kind != KeyEventKind::Press {
@@ -236,16 +261,20 @@ impl App {
                 } else {
                     self.main_key(k)
                 };
-                fx.extend(self.lazy_loads());
+                fx.extend(self.view_effects());
                 fx
             }
             Msg::Resize(w, h) => {
                 self.size = (w, h);
+                // A drawer only makes sense while it has focus.
+                if self.narrow() && self.diff_focus == DiffFocus::Diff {
+                    self.explorer_open = false;
+                }
                 if let Some(d) = &mut self.diff {
                     d.viewport = diff_viewport(h);
                     d.clamp_scroll();
                 }
-                self.lazy_loads()
+                self.view_effects()
             }
             Msg::Fs(kind) => vec![self.refresh(kind)],
             Msg::Watch(status) => {
@@ -261,7 +290,7 @@ impl App {
                     Ok(snap) => {
                         self.error = None;
                         let mut fx = self.apply_snapshot(*snap);
-                        fx.extend(self.lazy_loads());
+                        fx.extend(self.view_effects());
                         fx
                     }
                     Err(e) => {
@@ -288,7 +317,7 @@ impl App {
                         d.error = Some(e);
                     }
                 }
-                self.lazy_loads()
+                self.view_effects()
             }
             Msg::FileLoaded { seq, index, result } => {
                 if seq != self.patch_gen {
@@ -303,7 +332,16 @@ impl App {
                         }
                     }
                 }
-                self.lazy_loads()
+                self.view_effects()
+            }
+            Msg::Highlighted { key, hl, .. } => {
+                if let Some(d) = &mut self.diff {
+                    d.hl_requested.remove(&key);
+                    if d.keys.contains(&key) {
+                        d.highlights.insert(key, hl);
+                    }
+                }
+                Vec::new()
             }
             Msg::Tick => {
                 self.ticks = self.ticks.wrapping_add(1);
@@ -319,6 +357,52 @@ impl App {
                 Vec::new()
             }
         }
+    }
+
+    /// Below `ui::WIDE` columns the explorer is a drawer.
+    pub fn narrow(&self) -> bool {
+        self.size.0 < crate::ui::WIDE
+    }
+
+    /// Loads and highlighting for whatever the diff viewport shows.
+    fn view_effects(&mut self) -> Vec<Effect> {
+        let mut fx = self.lazy_loads();
+        fx.extend(self.highlights());
+        fx
+    }
+
+    /// Syntax highlighting for loaded files in (or just below) the
+    /// viewport.
+    fn highlights(&mut self) -> Vec<Effect> {
+        let seq = self.patch_gen;
+        let Some(d) = &mut self.diff else {
+            return Vec::new();
+        };
+        if !self.syntax || d.loading {
+            return Vec::new();
+        }
+        let mut fx = Vec::new();
+        for i in d.visible_files() {
+            let Some(p) = &d.patches[i] else { continue };
+            let key = &d.keys[i];
+            if p.binary
+                || p.hunks.is_empty()
+                || d.is_folded(i)
+                || d.highlights.contains_key(key)
+                || d.hl_requested.contains(key)
+            {
+                continue;
+            }
+            d.hl_requested.insert(key.clone());
+            fx.push(Effect::Highlight {
+                seq,
+                index: i,
+                key: key.clone(),
+                path: d.files[i].path.clone(),
+                patch: p.clone(),
+            });
+        }
+        fx
     }
 
     /// Lazy file loads for whatever the diff viewport shows.
@@ -510,6 +594,15 @@ impl App {
         self.marks.set(f.mark_key(), viewed, now);
     }
 
+    /// Tells the open diff which files are viewed, so they fold.
+    pub fn sync_viewed(&mut self) {
+        let Some(d) = &self.diff else { return };
+        let flags: Vec<bool> = d.keys.iter().map(|k| self.marks.is_viewed(k)).collect();
+        if let Some(d) = self.diff.as_mut() {
+            d.set_viewed(flags);
+        }
+    }
+
     fn toggle_target_viewed(&mut self) -> Vec<Effect> {
         let files = self.selected_files().to_vec();
         if files.is_empty() {
@@ -541,6 +634,7 @@ impl App {
             self.file_sel = i;
         }
         self.diff = Some(view);
+        self.diff_focus = DiffFocus::Diff;
         self.patch_gen += 1;
         vec![Effect::LoadPatch {
             seq: self.patch_gen,
@@ -550,6 +644,7 @@ impl App {
     }
 
     fn close_diff(&mut self) {
+        self.diff_focus = DiffFocus::Diff;
         if let Some(d) = self.diff.take() {
             if let Some(r) = self.row_of(&d.target) {
                 self.sel = r;
@@ -729,22 +824,111 @@ impl App {
         Vec::new()
     }
 
+    /// Toggles the explorer; opening it gives it focus.
+    fn toggle_explorer(&mut self) {
+        if self.explorer_open {
+            self.explorer_open = false;
+            self.diff_focus = DiffFocus::Diff;
+        } else {
+            self.explorer_open = true;
+            self.focus_explorer();
+        }
+    }
+
+    fn focus_explorer(&mut self) {
+        self.diff_focus = DiffFocus::Explorer;
+    }
+
+    /// Hands focus back to the diff; a drawer closes.
+    fn leave_explorer(&mut self) {
+        self.diff_focus = DiffFocus::Diff;
+        if self.narrow() {
+            self.explorer_open = false;
+        }
+    }
+
+    /// The explorer always marks the diff's current file; moving in it
+    /// moves the diff.
+    fn explorer_key(&mut self, k: KeyEvent) -> Vec<Effect> {
+        let Some(d) = self.diff.as_mut() else {
+            return Vec::new();
+        };
+        let last = d.files.len().saturating_sub(1);
+        let cur = d.current_file().unwrap_or(0);
+        match k.code {
+            KeyCode::Char('j') | KeyCode::Down => d.jump_to_file((cur + 1).min(last)),
+            KeyCode::Char('k') | KeyCode::Up => d.jump_to_file(cur.saturating_sub(1)),
+            KeyCode::Char('g') | KeyCode::Home => d.jump_to_file(0),
+            KeyCode::Char('G') | KeyCode::End => d.jump_to_file(last),
+            KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => {
+                // Picking a file means you want to read it.
+                d.unfold(cur);
+                self.leave_explorer();
+            }
+            KeyCode::Char(' ') => {
+                if let Some(f) = d.files.get(cur).cloned() {
+                    let v = self.is_viewed(&f);
+                    self.set_viewed(&f, !v);
+                    self.sync_viewed();
+                    if let Some(d) = self.diff.as_mut() {
+                        d.jump_to_file(cur);
+                    }
+                    return vec![Effect::SaveMarks];
+                }
+            }
+            KeyCode::Char('e') => {
+                if let Some(f) = d.files.get(cur).cloned() {
+                    let id = d.target.clone();
+                    return self.edit(id, f, None);
+                }
+            }
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('h') | KeyCode::Left => {
+                self.leave_explorer()
+            }
+            // Everything else (n/p, w/b, u, m…) works as in the diff.
+            _ => {
+                self.diff_focus = DiffFocus::Diff;
+                let fx = self.diff_key(k);
+                if self.explorer_open && self.diff.is_some() {
+                    self.focus_explorer();
+                }
+                return fx;
+            }
+        }
+        Vec::new()
+    }
+
     fn diff_key(&mut self, k: KeyEvent) -> Vec<Effect> {
         if let Some(fx) = self.global_key(&k) {
             return fx;
+        }
+        if key_is(&k, 'f') {
+            self.toggle_explorer();
+            return Vec::new();
+        }
+        if self.explorer_open && matches!(k.code, KeyCode::Tab | KeyCode::BackTab) {
+            match self.diff_focus {
+                DiffFocus::Diff => self.focus_explorer(),
+                DiffFocus::Explorer => self.leave_explorer(),
+            }
+            return Vec::new();
+        }
+        if self.explorer_open && self.diff_focus == DiffFocus::Explorer {
+            return self.explorer_key(k);
         }
         let Some(d) = self.diff.as_mut() else {
             return Vec::new();
         };
         let half = (d.viewport / 2).max(1) as isize;
+        let page = d.viewport.saturating_sub(2).max(1) as isize;
         match k.code {
             KeyCode::Char('q') | KeyCode::Esc => self.close_diff(),
-            KeyCode::Char('j') | KeyCode::Down => d.move_by(1),
-            KeyCode::Char('k') | KeyCode::Up => d.move_by(-1),
-            KeyCode::Char('d') if ctrl(&k, 'd') => d.page(half),
-            KeyCode::Char('u') if ctrl(&k, 'u') => d.page(-half),
-            KeyCode::PageDown => d.page(half * 2),
-            KeyCode::PageUp => d.page(-half * 2),
+            KeyCode::Char('j') | KeyCode::Down => d.scroll_by(1),
+            KeyCode::Char('k') | KeyCode::Up => d.scroll_by(-1),
+            KeyCode::Char('d') if ctrl(&k, 'd') => d.scroll_by(half),
+            KeyCode::Char('u') if ctrl(&k, 'u') => d.scroll_by(-half),
+            KeyCode::PageDown => d.scroll_by(page),
+            KeyCode::PageUp => d.scroll_by(-page),
             KeyCode::Char('g') | KeyCode::Home => d.top(),
             KeyCode::Char('G') | KeyCode::End => d.bottom(),
             KeyCode::Char(']') => {
@@ -761,8 +945,10 @@ impl App {
             }
             KeyCode::Char('h') | KeyCode::Left => d.scroll_h(-8),
             KeyCode::Char('l') | KeyCode::Right => d.scroll_h(8),
-            KeyCode::Enter => {
-                d.toggle_expand();
+            KeyCode::Enter | KeyCode::Char('o') => {
+                if let Some(i) = d.current_file() {
+                    d.toggle_fold(i);
+                }
             }
             KeyCode::Char(' ') => return self.view_and_advance(),
             KeyCode::Char('m') => {
@@ -770,7 +956,7 @@ impl App {
                 return self.toggle_merge_mode(Some(id));
             }
             KeyCode::Char('e') => {
-                let (Some(i), line) = (d.current_file(), d.cursor_line()) else {
+                let (Some(i), line) = (d.current_file(), d.edit_line()) else {
                     return Vec::new();
                 };
                 let (id, f) = (d.target.clone(), d.files[i].clone());
@@ -807,8 +993,9 @@ impl App {
         Vec::new()
     }
 
-    /// Space in the diff view: mark the current file viewed, then jump to
-    /// the next unviewed file, continuing into the next commit.
+    /// Space in the diff view: mark the current file viewed (which folds
+    /// it), then jump to the next unviewed file, continuing into the next
+    /// commit. On a viewed file, unmark it (which unfolds it) instead.
     fn view_and_advance(&mut self) -> Vec<Effect> {
         let Some(d) = &self.diff else {
             return Vec::new();
@@ -818,8 +1005,18 @@ impl App {
         };
         let file = d.files[cur].clone();
         let target = d.target.clone();
+        let fx = vec![Effect::SaveMarks];
+        if self.is_viewed(&file) {
+            self.set_viewed(&file, false);
+            self.sync_viewed();
+            if let Some(d) = self.diff.as_mut() {
+                d.jump_to_file(cur);
+            }
+            return fx;
+        }
         self.set_viewed(&file, true);
-        let mut fx = vec![Effect::SaveMarks];
+        self.sync_viewed();
+        let mut fx = fx;
 
         let d = self.diff.as_ref().expect("diff open");
         let n = d.files.len();

@@ -6,10 +6,12 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-/// A run of display text; `special` runs are escapes like `^M`.
+/// A run of display text with one style; `special` runs are escapes like
+/// `^M`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Seg {
     pub text: String,
+    pub style: Style,
     pub special: bool,
 }
 
@@ -28,38 +30,43 @@ fn is_control(ch: char) -> bool {
 
 /// Decodes bytes lossily, expands tabs and escapes control characters.
 pub fn segments(bytes: &[u8], tab: usize) -> Vec<Seg> {
+    segments_with(bytes, tab, |_| Style::new())
+}
+
+/// Like [`segments`], styling each character by its byte offset in
+/// `bytes` (so syntax and emphasis ranges line up even with tabs, escapes
+/// and invalid UTF-8).
+pub fn segments_with(
+    bytes: &[u8],
+    tab: usize,
+    mut style_at: impl FnMut(usize) -> Style,
+) -> Vec<Seg> {
     let tab = tab.max(1);
-    let mut out = Vec::new();
-    let mut cur = String::new();
+    let mut out: Vec<Seg> = Vec::new();
     let mut col = 0usize;
-    for ch in bytes.to_str_lossy().chars() {
+    let push = |text: &str, style: Style, special: bool, out: &mut Vec<Seg>| match out.last_mut() {
+        Some(last) if last.style == style && last.special == special => last.text.push_str(text),
+        _ => out.push(Seg {
+            text: text.to_owned(),
+            style,
+            special,
+        }),
+    };
+    let mut buf = [0u8; 4];
+    for (start, _, ch) in bytes.char_indices() {
+        let style = style_at(start);
         if ch == '\t' {
             let n = tab - col % tab;
-            cur.extend(std::iter::repeat_n(' ', n));
+            push(&" ".repeat(n), style, false, &mut out);
             col += n;
         } else if is_control(ch) {
-            if !cur.is_empty() {
-                out.push(Seg {
-                    text: std::mem::take(&mut cur),
-                    special: false,
-                });
-            }
             let e = escape(ch);
             col += e.len();
-            out.push(Seg {
-                text: e,
-                special: true,
-            });
+            push(&e, style, true, &mut out);
         } else {
-            cur.push(ch);
+            push(ch.encode_utf8(&mut buf), style, false, &mut out);
             col += ch.width().unwrap_or(0);
         }
-    }
-    if !cur.is_empty() {
-        out.push(Seg {
-            text: cur,
-            special: false,
-        });
     }
     out
 }
@@ -93,6 +100,7 @@ pub fn slice(segs: &[Seg], skip: usize, width: usize) -> Vec<Seg> {
         if !text.is_empty() {
             out.push(Seg {
                 text,
+                style: seg.style,
                 special: seg.special,
             });
         }
@@ -203,9 +211,17 @@ pub fn left_right(
     Line::from(spans)
 }
 
+/// Spans for segments: `base`, then each segment's own style, then
+/// `special` on escapes.
 pub fn styled_segs(segs: Vec<Seg>, base: Style, special: Style) -> Vec<Span<'static>> {
     segs.into_iter()
-        .map(|s| Span::styled(s.text, if s.special { special } else { base }))
+        .map(|s| {
+            let mut style = base.patch(s.style);
+            if s.special {
+                style = style.patch(special);
+            }
+            Span::styled(s.text, style)
+        })
         .collect()
 }
 
@@ -239,6 +255,27 @@ mod tests {
         assert_eq!(joined(&s), "a   b^[[0m^M");
         assert!(s[1].special);
         assert_eq!(joined(&segments(b"\xff", 4)), "\u{fffd}");
+    }
+
+    #[test]
+    fn styles_follow_byte_offsets() {
+        use ratatui::style::Color;
+        // "a\tb" then an invalid byte, then "cd": style bytes 2.. red.
+        let bytes = b"a\tb\xffcd";
+        let segs = segments_with(bytes, 4, |off| {
+            if off >= 2 {
+                Style::new().fg(Color::Red)
+            } else {
+                Style::new()
+            }
+        });
+        assert_eq!(joined(&segs), "a   b\u{fffd}cd");
+        assert_eq!(segs[0].text, "a   ");
+        assert_eq!(segs[1].text, "b\u{fffd}cd");
+        assert_eq!(segs[1].style.fg, Some(Color::Red));
+        let cut = slice(&segs, 3, 3);
+        assert_eq!(joined(&cut), " b\u{fffd}");
+        assert_eq!(cut[1].style.fg, Some(Color::Red));
     }
 
     #[test]

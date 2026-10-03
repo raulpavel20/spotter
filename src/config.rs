@@ -32,6 +32,12 @@ pub struct Config {
     pub collapse: Vec<String>,
     pub tab_width: usize,
     pub trunk_depth: usize,
+    /// `spotter.syntax`: syntax highlighting in the diff view.
+    pub syntax: bool,
+    /// `spotter.theme`: `auto`, `dark` or `light`.
+    pub theme: Option<String>,
+    /// `spotter.syntaxTheme`: a bundled syntax theme name.
+    pub syntax_theme: Option<String>,
 }
 
 impl Default for Config {
@@ -43,6 +49,9 @@ impl Default for Config {
             collapse: Vec::new(),
             tab_width: 4,
             trunk_depth: 20,
+            syntax: true,
+            theme: None,
+            syntax_theme: None,
         }
     }
 }
@@ -83,6 +92,9 @@ impl Config {
                         cfg.tab_width = n.clamp(1, 16);
                     }
                 }
+                "spotter.syntax" => cfg.syntax = parse_bool(&value).unwrap_or(true),
+                "spotter.theme" => cfg.theme = Some(value).filter(|v| !v.is_empty()),
+                "spotter.syntaxtheme" => cfg.syntax_theme = Some(value).filter(|v| !v.is_empty()),
                 "spotter.trunkdepth" => {
                     if let Ok(n) = value.trim().parse::<usize>() {
                         cfg.trunk_depth = n.clamp(1, 1000);
@@ -112,7 +124,8 @@ mod tests {
     fn parses_git_config_output() {
         let out = b"spotter.base\norigin/develop\0spotter.editorgui\ntrue\0\
 spotter.collapse\n*.snap\0spotter.collapse\nvendor/**\0spotter.tabwidth\n8\0\
-spotter.trunkdepth\n5\0spotter.editor\ncode -g {file}:{line}\0";
+spotter.trunkdepth\n5\0spotter.editor\ncode -g {file}:{line}\0\
+spotter.syntax\nfalse\0spotter.theme\nlight\0spotter.syntaxtheme\nGitHub\0";
         let cfg = Config::parse(out);
         assert_eq!(cfg.base.as_deref(), Some("origin/develop"));
         assert_eq!(cfg.editor_gui, Some(true));
@@ -120,6 +133,9 @@ spotter.trunkdepth\n5\0spotter.editor\ncode -g {file}:{line}\0";
         assert_eq!(cfg.tab_width, 8);
         assert_eq!(cfg.trunk_depth, 5);
         assert_eq!(cfg.editor.as_deref(), Some("code -g {file}:{line}"));
+        assert!(!cfg.syntax);
+        assert_eq!(cfg.theme.as_deref(), Some("light"));
+        assert_eq!(cfg.syntax_theme.as_deref(), Some("GitHub"));
     }
 
     #[test]

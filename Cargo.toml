@@ -24,6 +24,9 @@ notify = "8.2.0"
 ratatui = "0.30.2"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
+similar = "2.7"
+syntect = { version = "5.3", default-features = false, features = ["parsing", "dump-load", "regex-onig"] }
+two-face = "0.5"
 unicode-width = "0.2.2"
 
 [dev-dependencies]
@@ -34,4 +37,14 @@ tempfile = "3.27.0"
 opt-level = 3
 
 [profile.dev.package.similar]
+opt-level = 3
+
+# Highlighting is the hot path in tests and debug builds.
+[profile.dev.package.syntect]
+opt-level = 3
+
+[profile.dev.package.onig]
+opt-level = 3
+
+[profile.dev.package.onig_sys]
 opt-level = 3
