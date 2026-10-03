@@ -1,0 +1,28 @@
+---
+source: tests/ui.rs
+expression: "h.render(80, 24)"
+---
+ feature/inventory · main                                  ● live · 4 to review
+┌ Timeline┌ Keys · any key closes ───────────────────────────────────┐─────────┐
+│ ◌ Uncomm│ Everywhere                                               │   +4    │
+│ ● 8a9051│   q / esc  back · q on the main screen quits             │   +2 -1 │
+│▸◐ aa3185│   tab      switch panel                                  │   +7    │
+│ ● 3ddc35│   w / b    jump to ◌ uncommitted / Σ branch total        │  +60    │
+│ ● 289a7a│   u        oldest commit with unviewed files             │   +3    │
+├─────────│   n / p    newer / older commit                          │─────────┤
+│ Σ Branch│   i        Σ: toggle uncommitted changes                 │  +75    │
+└─────────│   m        merge: remerge-diff / first-parent            │─────────┘
+┌ Files · │   ctrl-l   refresh and redraw                            │─────────┐
+│▸✓ A  ass│   ?        this help                                     │     +1  │
+│   A  src│                                                          │     +6  │
+│         │ Timeline and files                                       │         │
+│         │   j / k    move                                          │         │
+│         │   g / G    top / bottom                                  │         │
+│         │   enter    timeline: files · files: open diff            │         │
+│         │   space    files: toggle viewed                          │         │
+│         │   r        toggle all files of the target viewed         │         │
+│         │   e        files: open in editor                         │         │
+│         │                                                          │         │
+│         │ the review loop: u, enter, then space space space…       │         │
+└─────────└──────────────────────────────────────────────────────────┘─────────┘
+ enter files · u next · ? help

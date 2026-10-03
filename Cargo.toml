@@ -1,0 +1,37 @@
+[package]
+name = "spotter-tui"
+version = "0.1.0"
+edition = "2024"
+description = "A live, read-only terminal review view of what changed on your branch"
+license = "MIT"
+rust-version = "1.85"
+
+[lib]
+name = "spotter"
+path = "src/lib.rs"
+
+[[bin]]
+name = "spotter"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0.104"
+bstr = "1.13.1"
+clap = { version = "4.6.7", features = ["derive"] }
+crossterm = "0.29.0"
+ignore = "0.4.33"
+notify = "8.2.0"
+ratatui = "0.30.2"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+unicode-width = "0.2.2"
+
+[dev-dependencies]
+insta = "1.49.0"
+tempfile = "3.27.0"
+
+[profile.dev.package.insta]
+opt-level = 3
+
+[profile.dev.package.similar]
+opt-level = 3

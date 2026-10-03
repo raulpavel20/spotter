@@ -1,0 +1,274 @@
+//! The background worker: refreshes and patch loads off the UI thread,
+//! with request coalescing and a patch cache (PLAN §6.2, §8).
+
+use std::collections::{HashMap, VecDeque};
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::thread;
+
+use crate::config::Config;
+use crate::git::Repo;
+use crate::git::diff::DiffSpec;
+use crate::model::FileChange;
+use crate::msg::{Msg, RefreshKind};
+use crate::refresh::{self, Cache, LoadedPatch, RefreshOpts, Snapshot};
+
+#[derive(Debug)]
+pub enum Request {
+    Refresh {
+        seq: u64,
+        kind: RefreshKind,
+        opts: RefreshOpts,
+    },
+    Patch {
+        seq: u64,
+        spec: DiffSpec,
+        files: Vec<FileChange>,
+    },
+    File {
+        seq: u64,
+        index: usize,
+        spec: DiffSpec,
+        file: FileChange,
+    },
+}
+
+/// What one round of the worker does after draining its queue.
+#[derive(Debug, Default)]
+pub struct Batch {
+    pub refresh: Option<(u64, RefreshKind, RefreshOpts)>,
+    pub patch: Option<(u64, DiffSpec, Vec<FileChange>)>,
+    pub files: Vec<(u64, usize, DiffSpec, FileChange)>,
+}
+
+/// Coalesces queued requests: one refresh (the strongest kind, the latest
+/// options), the latest patch, and every file load.
+pub fn coalesce(reqs: impl IntoIterator<Item = Request>) -> Batch {
+    let mut b = Batch::default();
+    for r in reqs {
+        match r {
+            Request::Refresh { seq, kind, opts } => {
+                b.refresh = Some(match b.refresh.take() {
+                    Some((s, k, o)) => {
+                        let (seq2, opts2) = if seq >= s { (seq, opts) } else { (s, o) };
+                        (seq2, k.max(kind), opts2)
+                    }
+                    None => (seq, kind, opts),
+                });
+            }
+            Request::Patch { seq, spec, files } => {
+                if b.patch.as_ref().is_none_or(|(s, _, _)| seq >= *s) {
+                    b.patch = Some((seq, spec, files));
+                }
+            }
+            Request::File {
+                seq,
+                index,
+                spec,
+                file,
+            } => {
+                if !b.files.iter().any(|(s, i, _, _)| *s == seq && *i == index) {
+                    b.files.push((seq, index, spec, file));
+                }
+            }
+        }
+    }
+    b
+}
+
+/// Byte-budgeted LRU of immutable (commit) patches.
+struct PatchCache {
+    map: HashMap<DiffSpec, (LoadedPatch, usize)>,
+    order: VecDeque<DiffSpec>,
+    bytes: usize,
+    budget: usize,
+}
+
+fn patch_bytes(p: &LoadedPatch) -> usize {
+    p.patches
+        .iter()
+        .flatten()
+        .flat_map(|fp| fp.hunks.iter())
+        .map(|h| h.lines.iter().map(|l| l.text.len() + 48).sum::<usize>())
+        .sum::<usize>()
+        + 256
+}
+
+impl PatchCache {
+    fn new(budget: usize) -> Self {
+        PatchCache {
+            map: HashMap::new(),
+            order: VecDeque::new(),
+            bytes: 0,
+            budget,
+        }
+    }
+
+    fn get(&mut self, k: &DiffSpec, files: &[FileChange]) -> Option<LoadedPatch> {
+        let (p, _) = self.map.get(k)?;
+        if p.files != files {
+            return None;
+        }
+        let p = p.clone();
+        self.order.retain(|x| x != k);
+        self.order.push_back(k.clone());
+        Some(p)
+    }
+
+    fn put(&mut self, k: DiffSpec, p: LoadedPatch) {
+        let size = patch_bytes(&p);
+        if size > self.budget {
+            return;
+        }
+        if let Some((_, old)) = self.map.insert(k.clone(), (p, size)) {
+            self.bytes -= old;
+            self.order.retain(|x| x != &k);
+        }
+        self.bytes += size;
+        self.order.push_back(k);
+        while self.bytes > self.budget {
+            let Some(old) = self.order.pop_front() else {
+                break;
+            };
+            if let Some((_, s)) = self.map.remove(&old) {
+                self.bytes -= s;
+            }
+        }
+    }
+}
+
+pub struct Worker {
+    repo: Repo,
+    cfg: Config,
+    base: Option<String>,
+    cache: Cache,
+    patches: PatchCache,
+    last: Option<Snapshot>,
+}
+
+impl Worker {
+    pub fn new(repo: Repo, cfg: Config, base: Option<String>) -> Self {
+        Worker {
+            repo,
+            cfg,
+            base,
+            cache: Cache::default(),
+            patches: PatchCache::new(64 * 1024 * 1024),
+            last: None,
+        }
+    }
+
+    pub fn refresh(&mut self, kind: RefreshKind, opts: &RefreshOpts) -> Result<Snapshot, String> {
+        let base = self.base.as_deref();
+        let result = match (kind, &self.last) {
+            (RefreshKind::Worktree, Some(prev)) => {
+                refresh::worktree(&self.repo, &self.cfg, base, opts, prev, &mut self.cache)
+            }
+            _ => refresh::full(
+                &self.repo,
+                &self.cfg,
+                base,
+                opts,
+                self.last.as_ref(),
+                &mut self.cache,
+            ),
+        };
+        let snap = result.map_err(|e| e.to_string())?;
+        self.last = Some(snap.clone());
+        Ok(snap)
+    }
+
+    pub fn patch(&mut self, spec: &DiffSpec, files: &[FileChange]) -> Result<LoadedPatch, String> {
+        if !spec.is_volatile() {
+            if let Some(p) = self.patches.get(spec, files) {
+                return Ok(p);
+            }
+        }
+        let p = refresh::load_patch(&self.repo, spec, files).map_err(|e| e.to_string())?;
+        if !spec.is_volatile() && !p.lazy {
+            self.patches.put(spec.clone(), p.clone());
+        }
+        Ok(p)
+    }
+
+    fn run(mut self, rx: Receiver<Request>, out: Sender<Msg>) {
+        while let Ok(first) = rx.recv() {
+            let mut reqs = vec![first];
+            reqs.extend(rx.try_iter());
+            let batch = coalesce(reqs);
+            if let Some((seq, kind, opts)) = batch.refresh {
+                let result = self.refresh(kind, &opts).map(Box::new);
+                if out.send(Msg::Refreshed { seq, result }).is_err() {
+                    return;
+                }
+            }
+            if let Some((seq, spec, files)) = batch.patch {
+                let result = self.patch(&spec, &files);
+                if out.send(Msg::PatchLoaded { seq, result }).is_err() {
+                    return;
+                }
+            }
+            for (seq, index, spec, file) in batch.files {
+                let result =
+                    refresh::load_file(&self.repo, &spec, &file).map_err(|e| e.to_string());
+                if out.send(Msg::FileLoaded { seq, index, result }).is_err() {
+                    return;
+                }
+            }
+        }
+    }
+}
+
+/// Starts the worker thread; drop the returned sender to stop it.
+pub fn spawn(repo: Repo, cfg: Config, base: Option<String>, out: Sender<Msg>) -> Sender<Request> {
+    let (tx, rx) = mpsc::channel();
+    let worker = Worker::new(repo, cfg, base);
+    thread::Builder::new()
+        .name("spotter-worker".into())
+        .spawn(move || worker.run(rx, out))
+        .expect("spawn worker thread");
+    tx
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn coalesces_refreshes_and_keeps_latest_patch() {
+        let spec = |s: &str| DiffSpec::Worktree(s.into());
+        let b = coalesce([
+            Request::Refresh {
+                seq: 1,
+                kind: RefreshKind::Worktree,
+                opts: RefreshOpts::default(),
+            },
+            Request::Patch {
+                seq: 1,
+                spec: spec("a"),
+                files: vec![],
+            },
+            Request::Refresh {
+                seq: 2,
+                kind: RefreshKind::Full,
+                opts: RefreshOpts::default(),
+            },
+            Request::Refresh {
+                seq: 3,
+                kind: RefreshKind::Worktree,
+                opts: RefreshOpts {
+                    include_wt: true,
+                    ..Default::default()
+                },
+            },
+            Request::Patch {
+                seq: 2,
+                spec: spec("b"),
+                files: vec![],
+            },
+        ]);
+        let (seq, kind, opts) = b.refresh.unwrap();
+        assert_eq!((seq, kind), (3, RefreshKind::Full));
+        assert!(opts.include_wt);
+        assert_eq!(b.patch.unwrap().1, spec("b"));
+    }
+}
