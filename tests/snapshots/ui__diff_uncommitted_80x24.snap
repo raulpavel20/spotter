@@ -1,5 +1,6 @@
 ---
 source: tests/ui.rs
+assertion_line: 73
 expression: "h.render(80, 24)"
 ---
  Uncommitted · src/inventory.gd (1/3)                              ● 0/3 viewed
@@ -25,4 +26,4 @@ expression: "h.render(80, 24)"
 
 
 ────────────────────────────────────────────────────────────────────────────────
- ]/[ hunk · }/{ file · f files · space viewed · n/p commit · e edit · esc back
+ ]/[ hunk · }/{ file · enter collapse · space viewed · f files · esc back

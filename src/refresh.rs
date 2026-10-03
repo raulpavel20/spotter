@@ -11,7 +11,7 @@ use ignore::gitignore::{Gitignore, GitignoreBuilder};
 
 use crate::config::Config;
 use crate::git::base::{self, BaseInfo, BaseOptions};
-use crate::git::diff::{self, DiffSpec};
+use crate::git::diff::{self, DiffOpts, DiffSpec};
 use crate::git::log;
 use crate::git::patch::{self, bytes_to_os};
 use crate::git::status;
@@ -20,8 +20,6 @@ use crate::model::{
     Collapse, Commit, FileChange, FilePatch, MODE_GITLINK, MODE_SYMLINK, Status, TargetId,
 };
 
-/// Files above this many changed lines start collapsed.
-pub const COLLAPSE_LINES: u64 = 1500;
 /// Above this many changed lines, a target's files load on demand.
 pub const LAZY_LINES: u64 = 20_000;
 /// Untracked files above this size get a summary only.
@@ -509,6 +507,8 @@ pub fn hash_worktree(repo: &Repo, paths: &[BString]) -> Result<HashMap<BString, 
 /// Collapse rules (PLAN §6.4).
 pub struct Collapser {
     patterns: Gitignore,
+    /// Files with more changed lines start collapsed.
+    lines: u64,
 }
 
 impl Collapser {
@@ -523,6 +523,7 @@ impl Collapser {
         }
         Collapser {
             patterns: b.build().unwrap_or_else(|_| Gitignore::empty()),
+            lines: cfg.collapse_lines,
         }
     }
 
@@ -541,7 +542,7 @@ impl Collapser {
                 Some(Collapse::Lockfile)
             } else if let Some(c) = attrs.get(&f.path) {
                 Some(*c)
-            } else if f.lines_changed() > COLLAPSE_LINES {
+            } else if f.lines_changed() > self.lines {
                 Some(Collapse::Large)
             } else {
                 None
@@ -596,6 +597,7 @@ pub fn load_patch(
     repo: &Repo,
     spec: &DiffSpec,
     files: &[FileChange],
+    opts: DiffOpts,
 ) -> Result<LoadedPatch, GitError> {
     let lines: u64 = files.iter().map(FileChange::lines_changed).sum();
     if lines > LAZY_LINES {
@@ -614,7 +616,7 @@ pub fn load_patch(
     let mut attached = if tracked.is_empty() {
         Vec::new()
     } else {
-        patch::attach(&tracked, patch::load(&repo.git, spec, None)?)
+        patch::attach(&tracked, patch::load(&repo.git, spec, None, opts)?)
     }
     .into_iter();
     for f in files {
@@ -635,7 +637,12 @@ pub fn load_patch(
 }
 
 /// Loads one file's patch (lazy targets, or collapsed files).
-pub fn load_file(repo: &Repo, spec: &DiffSpec, f: &FileChange) -> Result<FilePatch, GitError> {
+pub fn load_file(
+    repo: &Repo,
+    spec: &DiffSpec,
+    f: &FileChange,
+    opts: DiffOpts,
+) -> Result<FilePatch, GitError> {
     let mut p = if f.status == Status::Untracked {
         untracked_patch(repo, f)
     } else {
@@ -643,7 +650,7 @@ pub fn load_file(repo: &Repo, spec: &DiffSpec, f: &FileChange) -> Result<FilePat
         if let Some(old) = &f.old_path {
             paths.push(old);
         }
-        let parsed = patch::load(&repo.git, spec, Some(&paths))?;
+        let parsed = patch::load(&repo.git, spec, Some(&paths), opts)?;
         patch::attach(std::slice::from_ref(f), parsed)
             .pop()
             .flatten()

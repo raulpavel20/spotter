@@ -1,5 +1,6 @@
 ---
 source: tests/ui.rs
+assertion_line: 84
 expression: "h.render(80, 24)"
 ---
  feature/inventory · main                                  ● live · 4 to review
@@ -7,13 +8,13 @@ expression: "h.render(80, 24)"
 │ ◌ Uncomm│ Everywhere                                               │   +4    │
 │ ● 8a9051│   q / esc  back · q on the main screen quits             │   +2 -1 │
 │▸◐ aa3185│   tab      switch panel                                  │   +7    │
-│ ● 3ddc35│   w / b    jump to ◌ uncommitted / Σ branch total        │  +60    │
+│ ● 3ddc35│   w / b    jump to uncommitted / branch total            │  +60    │
 │ ● 289a7a│   u        oldest commit with unviewed files             │   +3    │
 ├─────────│   n / p    newer / older commit                          │─────────┤
-│ Σ Branch│   i        Σ: toggle uncommitted changes                 │  +75    │
+│ Σ Branch│   i        branch total: toggle uncommitted changes      │  +75    │
 └─────────│   m        merge: remerge-diff / first-parent            │─────────┘
 ┌ Files · │   ctrl-l   refresh and redraw                            │─────────┐
-│▸✓ A  ass│   ?        this help                                     │     +1  │
+│▸✓ A  ass│   , · ?    settings · this help                          │     +1  │
 │   A  src│                                                          │     +6  │
 │         │ Timeline and files                                       │         │
 │         │   j / k    move                                          │         │
@@ -25,4 +26,4 @@ expression: "h.render(80, 24)"
 │         │                                                          │         │
 │         │ the review loop: u, enter, then space space space…       │         │
 └─────────└──────────────────────────────────────────────────────────┘─────────┘
- enter files · u next · ? help
+ enter files · u next to review · r view all · w/b jump · , settings · ? help

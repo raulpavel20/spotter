@@ -4,9 +4,11 @@
 pub mod diff;
 pub mod explorer;
 pub mod files;
+pub mod glyphs;
 pub mod header;
 pub mod help;
 pub mod palette;
+pub mod settings;
 pub mod text;
 pub mod theme;
 pub mod timeline;
@@ -16,9 +18,6 @@ use ratatui::layout::{Constraint, Layout, Rect};
 
 use crate::app::App;
 
-/// Below this width the timeline sits above the files (PLAN §4).
-pub const WIDE: u16 = 100;
-
 pub fn draw(f: &mut Frame, app: &mut App) {
     let area = f.area();
     if app.diff.is_some() {
@@ -27,8 +26,12 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     } else {
         draw_main(f, area, app);
     }
+    // Settings open as a panel over whatever screen is showing.
+    if app.settings.is_some() {
+        settings::draw(f, area, app);
+    }
     if app.help {
-        help::draw(f, area, app.diff.is_some());
+        help::draw(f, area, app.diff.is_some(), app.glyphs().border);
     }
 }
 
@@ -43,9 +46,10 @@ fn draw_main(f: &mut Frame, area: Rect, app: &mut App) {
     .areas(area);
     header::draw(f, head, app);
     header::draw_banner(f, ban, banner);
-    let wide = area.width >= WIDE;
+    let wide = !app.narrow_at(area.width);
     if wide {
-        let tl_w = (area.width as u32 * 45 / 100).clamp(40, 90) as u16;
+        let pct = app.config.timeline_width as u32;
+        let tl_w = (area.width as u32 * pct / 100).clamp(30, area.width as u32 - 20) as u16;
         let [tl, fl] =
             Layout::horizontal([Constraint::Length(tl_w), Constraint::Min(0)]).areas(body);
         timeline::draw(f, tl, app);
@@ -59,5 +63,5 @@ fn draw_main(f: &mut Frame, area: Rect, app: &mut App) {
         timeline::draw(f, tl, app);
         files::draw(f, fl, app, false);
     }
-    header::draw_footer(f, foot, app, wide);
+    header::draw_footer(f, foot, app);
 }

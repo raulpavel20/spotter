@@ -10,13 +10,13 @@ use super::theme;
 const EVERYWHERE: &[(&str, &str)] = &[
     ("q / esc", "back · q on the main screen quits"),
     ("tab", "switch panel"),
-    ("w / b", "jump to ◌ uncommitted / Σ branch total"),
+    ("w / b", "jump to uncommitted / branch total"),
     ("u", "oldest commit with unviewed files"),
     ("n / p", "newer / older commit"),
-    ("i", "Σ: toggle uncommitted changes"),
+    ("i", "branch total: toggle uncommitted changes"),
     ("m", "merge: remerge-diff / first-parent"),
     ("ctrl-l", "refresh and redraw"),
-    ("?", "this help"),
+    (", · ?", "settings · this help"),
 ];
 
 const PANELS: &[(&str, &str)] = &[
@@ -32,10 +32,10 @@ const DIFF: &[(&str, &str)] = &[
     ("j/k g/G", "scroll, top/bottom · ctrl-d/u half page"),
     ("] / [", "next / previous hunk"),
     ("} / {", "next / previous file"),
-    ("f · tab", "file explorer · switch focus to it"),
+    ("f · ←/tab", "file explorer · move into it (→ back)"),
     ("enter", "collapse / expand the file at the top"),
     ("space", "viewed (collapses) + next · again: unview"),
-    ("h / l", "scroll left / right"),
+    ("h / l · W", "scroll left / right · hide whitespace changes"),
     ("e", "open editor at the first change on screen"),
 ];
 
@@ -52,7 +52,12 @@ fn section(lines: &mut Vec<Line<'static>>, title: &str, keys: &[(&str, &str)]) {
     }
 }
 
-pub fn draw(f: &mut Frame, area: Rect, in_diff: bool) {
+pub fn draw(
+    f: &mut Frame,
+    area: Rect,
+    in_diff: bool,
+    border: ratatui::symbols::border::Set<'static>,
+) {
     let mut lines = Vec::new();
     section(&mut lines, "Everywhere", EVERYWHERE);
     if in_diff {
@@ -75,7 +80,11 @@ pub fn draw(f: &mut Frame, area: Rect, in_diff: bool) {
     };
     f.render_widget(Clear, popup);
     f.render_widget(
-        Paragraph::new(lines).block(Block::bordered().title(" Keys · any key closes ")),
+        Paragraph::new(lines).block(
+            Block::bordered()
+                .border_set(border)
+                .title(" Keys · any key closes "),
+        ),
         popup,
     );
 }

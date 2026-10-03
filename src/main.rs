@@ -10,13 +10,13 @@ use clap::Parser;
 use crossterm::event::{self, Event};
 
 use spotter::app::App;
-use spotter::config::{Args, Config};
+use spotter::config::{self, Args, Config};
+use spotter::config_file;
 use spotter::editor::{self, Prepared};
 use spotter::git::Repo;
-use spotter::highlight::{self, HlRequest};
+use spotter::highlight::{self, HlMsg, HlRequest};
 use spotter::msg::{Effect, Msg, RefreshKind, WatchStatus};
 use spotter::review::{self, Marks};
-use spotter::ui::palette::Palette;
 use spotter::worker::{self, Request};
 use spotter::{term, ui, watch};
 
@@ -97,8 +97,33 @@ impl Input {
     }
 }
 
+fn mtime(path: Option<&std::path::Path>) -> Option<std::time::SystemTime> {
+    std::fs::metadata(path?).and_then(|m| m.modified()).ok()
+}
+
+/// Runs an editor: GUI ones in the background, terminal ones in the
+/// foreground with the TUI suspended.
+fn launch(
+    l: &editor::Launch,
+    cwd: &std::path::Path,
+    input: &Input,
+    terminal: &mut term::Tui,
+) -> anyhow::Result<Result<(), String>> {
+    if l.gui {
+        return Ok(editor::spawn_detached(l, cwd));
+    }
+    input.pause();
+    term::suspend();
+    let r = editor::run_foreground(l, cwd);
+    term::resume(terminal)?;
+    input.resume();
+    Ok(r)
+}
+
 fn run(repo: Repo, args: Args) -> anyhow::Result<()> {
-    let cfg = Config::load(&repo.git);
+    let config_path = args.config.clone().or_else(config::default_path);
+    let loaded = Config::load(config_path.as_deref(), &repo.git);
+    let cfg = loaded.config.clone();
     let (tx, rx) = mpsc::channel::<Msg>();
     let worker = worker::spawn(repo.clone(), cfg.clone(), args.base.clone(), tx.clone());
     let (status, _watcher) = if args.no_watch {
@@ -109,23 +134,25 @@ fn run(repo: Repo, args: Args) -> anyhow::Result<()> {
             Err(e) => (WatchStatus::Error(e), None),
         }
     };
+    let env = |k: &str| std::env::var(k).ok();
     let mut app = App::new(
         repo.empty_tree.clone(),
         Marks::load(repo.marks_path()),
         status,
+        cfg,
+    )
+    .with_settings(
+        loaded.sources.clone(),
+        config_path.clone(),
+        env("COLORTERM"),
+        env("COLORFGBG"),
     );
-    app.tab_width = cfg.tab_width;
-    let env = |k: &str| std::env::var(k).ok();
-    app.palette = Palette::detect(
-        cfg.theme.as_deref(),
-        env("COLORTERM").as_deref(),
-        env("COLORFGBG").as_deref(),
-    );
-    app.syntax = cfg.syntax;
-    let highlighter = cfg.syntax.then(|| {
-        let theme = highlight::theme_name(cfg.syntax_theme.as_deref(), app.palette.background);
-        highlight::spawn(theme, tx.clone())
-    });
+    if let Some(w) = loaded.warnings.first() {
+        app.error = Some(format!("settings: {w}"));
+    }
+    // Always running, so syntax highlighting can be switched on live.
+    let highlighter = highlight::spawn(app.syntax_theme(), tx.clone());
+    let mut config_mtime = mtime(config_path.as_deref());
 
     let mut terminal = term::init().context("terminal setup")?;
     if std::env::var_os("SPOTTER_TEST_PANIC").is_some() {
@@ -151,20 +178,32 @@ fn run(repo: Repo, args: Args) -> anyhow::Result<()> {
                     Effect::Refresh { seq, kind, opts } => {
                         let _ = worker.send(Request::Refresh { seq, kind, opts });
                     }
-                    Effect::LoadPatch { seq, spec, files } => {
-                        let _ = worker.send(Request::Patch { seq, spec, files });
+                    Effect::LoadPatch {
+                        seq,
+                        spec,
+                        files,
+                        opts,
+                    } => {
+                        let _ = worker.send(Request::Patch {
+                            seq,
+                            spec,
+                            files,
+                            opts,
+                        });
                     }
                     Effect::LoadFile {
                         seq,
                         index,
                         spec,
                         file,
+                        opts,
                     } => {
                         let _ = worker.send(Request::File {
                             seq,
                             index,
                             spec,
                             file,
+                            opts,
                         });
                     }
                     Effect::Highlight {
@@ -174,15 +213,49 @@ fn run(repo: Repo, args: Args) -> anyhow::Result<()> {
                         path,
                         patch,
                     } => {
-                        if let Some(h) = &highlighter {
-                            let _ = h.send(HlRequest {
-                                seq,
-                                index,
-                                key,
-                                path,
-                                patch,
-                            });
+                        let _ = highlighter.send(HlMsg::Highlight(HlRequest {
+                            seq,
+                            index,
+                            key,
+                            path,
+                            patch,
+                        }));
+                    }
+                    Effect::SaveSetting { key, value } => match &config_path {
+                        Some(p) => match config_file::save(p, key, value.as_ref()) {
+                            Ok(()) => config_mtime = mtime(Some(p)),
+                            Err(e) => app.error = Some(format!("saving settings: {e}")),
+                        },
+                        None => {
+                            app.error = Some("no settings file: set HOME or use --config".into())
                         }
+                    },
+                    Effect::SetWorkerConfig(c) => {
+                        let _ = worker.send(Request::SetConfig(*c));
+                    }
+                    Effect::SetSyntaxTheme(t) => {
+                        let _ = highlighter.send(HlMsg::SetTheme(t));
+                    }
+                    Effect::EditConfig => {
+                        let Some(p) = &config_path else {
+                            app.error = Some("no settings file: set HOME or use --config".into());
+                            continue;
+                        };
+                        if let Err(e) = config_file::ensure_exists(p) {
+                            app.error = Some(format!("creating {}: {e}", p.display()));
+                            continue;
+                        }
+                        let l = editor::resolve(
+                            &app.config,
+                            std::env::var("VISUAL").ok(),
+                            std::env::var("EDITOR").ok(),
+                            &p.to_string_lossy(),
+                            1,
+                        );
+                        if let Err(e) = launch(&l, &repo.root, &input, &mut terminal)? {
+                            app.toast = Some((e, spotter::app::TOAST_TICKS));
+                        }
+                        // The file is re-read on the next tick if it changed.
                     }
                     Effect::SaveMarks => {
                         if let Err(e) = app.marks.save(review::now()) {
@@ -190,21 +263,12 @@ fn run(repo: Repo, args: Args) -> anyhow::Result<()> {
                         }
                     }
                     Effect::Redraw => term::reset(&mut terminal)?,
-                    Effect::OpenEditor(req) => match editor::prepare(&repo, &cfg, &req) {
+                    Effect::OpenEditor(req) => match editor::prepare(&repo, &app.config, &req) {
                         Prepared::Refused(msg) => {
                             app.toast = Some((msg, spotter::app::TOAST_TICKS))
                         }
-                        Prepared::Run { launch, note } => {
-                            let result = if launch.gui {
-                                editor::spawn_detached(&launch, &repo.root)
-                            } else {
-                                input.pause();
-                                term::suspend();
-                                let r = editor::run_foreground(&launch, &repo.root);
-                                term::resume(&mut terminal)?;
-                                input.resume();
-                                r
-                            };
+                        Prepared::Run { launch: l, note } => {
+                            let result = launch(&l, &repo.root, &input, &mut terminal)?;
                             let msg = match result {
                                 Ok(()) => note,
                                 Err(e) => Some(e),
@@ -242,6 +306,14 @@ fn run(repo: Repo, args: Args) -> anyhow::Result<()> {
             last_tick = Instant::now();
             let had_toast = app.toast.is_some();
             effects.extend(app.update(Msg::Tick));
+            // Settings edited outside the screen (or with `e`).
+            let m = mtime(config_path.as_deref());
+            if m != config_mtime {
+                config_mtime = m;
+                let loaded = Config::load(config_path.as_deref(), &repo.git);
+                effects.extend(app.update(Msg::ConfigReloaded(Box::new(loaded))));
+                dirty = true;
+            }
             if app.marks.reload_if_changed() {
                 // Another instance changed marks: viewed files fold.
                 app.sync_viewed();

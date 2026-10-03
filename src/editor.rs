@@ -99,7 +99,12 @@ pub fn prepare(repo: &Repo, cfg: &Config, req: &EditRequest) -> Prepared {
         ));
     }
     let line = req.line.or_else(|| {
-        refresh::load_file(repo, &req.spec, &req.file)
+        // No context needed to find the first change.
+        let opts = crate::git::diff::DiffOpts {
+            context: 0,
+            ignore_ws: false,
+        };
+        refresh::load_file(repo, &req.spec, &req.file, opts)
             .ok()
             .and_then(|p| first_changed_line(&p))
     });

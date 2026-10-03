@@ -162,6 +162,35 @@ pub fn parse_file_list(out: &[u8]) -> Vec<FileChange> {
     parse_entries(&mut Cursor::new(out))
 }
 
+/// How patches are produced (the file list doesn't depend on these).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct DiffOpts {
+    /// Context lines (`-U`).
+    pub context: u32,
+    /// `-w`: ignore whitespace changes.
+    pub ignore_ws: bool,
+}
+
+impl Default for DiffOpts {
+    fn default() -> Self {
+        DiffOpts {
+            context: 3,
+            ignore_ws: false,
+        }
+    }
+}
+
+impl DiffOpts {
+    /// Distinguishes highlight cache entries made with different options.
+    pub fn suffix(&self) -> String {
+        format!(
+            "|U{}{}",
+            self.context,
+            if self.ignore_ws { "w" } else { "" }
+        )
+    }
+}
+
 /// What a target's diff compares.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum DiffSpec {

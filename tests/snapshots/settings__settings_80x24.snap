@@ -1,0 +1,28 @@
+---
+source: tests/settings.rs
+expression: "h.render(80, 24)"
+---
+ feature · main                                            ● live · 1 to review
+┌ Timeline ──┌ Settings ──────────────────────────────────────────┐────────────┐
+│▸◌ Uncommitt│ Review                                             │      clean │
+│ ● f1edb08 c│ ▸ Open diffs with the file explorer ··········· on │      +1 -1 │
+├────────────│   Collapse files marked viewed ················ on │────────────┤
+│ Σ Branch to│   Space continues into the next commit ········ on │file  +1 -1 │
+└────────────│   Σ includes uncommitted changes ·············· on │────────────┘
+┌ Files · Unc│                                                    │────────────┐
+│ working tre│ Diff                                               │            │
+│            │   Context lines ································ 3 │            │
+│            │   Ignore whitespace changes ·················· off │            │
+│            │   Highlight changed words ····················· on │            │
+│            │   Line numbers ································ on │            │
+│            │   Syntax highlighting ························ off │            │
+│            │   Tab width ···································· 4 │            │
+│            │   Collapse files above (lines) ·············· 1500 │            │
+│            │   Always-collapsed patterns ···················· — │            │
+│            │                                                    │            │
+│            ├────────────────────────────────────────────────────┤            │
+│            │ Show the file explorer when a diff opens (wide     │            │
+│            │ panes only).                                       │            │
+│            │ review.explorer_on_open                            │            │
+└────────────└─── ←/→ change · d default · e edit · esc close ────┘────────────┘
+ enter files · u next to review · w/b jump · , settings · ? help

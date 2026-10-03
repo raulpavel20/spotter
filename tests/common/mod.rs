@@ -199,7 +199,7 @@ impl TestRepo {
 
     pub fn snapshot_with(&self, base: Option<&str>, include_wt: bool) -> Snapshot {
         let repo = self.repo();
-        let cfg = Config::load(&repo.git);
+        let cfg = Config::load(None, &repo.git).config;
         let opts = RefreshOpts {
             include_wt,
             ..RefreshOpts::default()
@@ -254,6 +254,8 @@ pub struct Harness {
     pub worker: Worker,
     pub repo: Repo,
     pub edits: Vec<EditRequest>,
+    /// Settings the app asked to save.
+    pub saved: Vec<(&'static str, Option<spotter::config::Value>)>,
 }
 
 impl Harness {
@@ -268,16 +270,37 @@ impl Harness {
         Self::with_marks(r, Marks::in_memory())
     }
 
+    /// In-memory marks and adjusted settings.
+    pub fn configured(r: &TestRepo, f: impl FnOnce(&mut Config)) -> Self {
+        Self::build(r, Marks::in_memory(), f)
+    }
+
     fn with_marks(r: &TestRepo, marks: Marks) -> Self {
+        Self::build(r, marks, |_| {})
+    }
+
+    fn build(r: &TestRepo, marks: Marks, f: impl FnOnce(&mut Config)) -> Self {
         let repo = r.repo();
-        let cfg = Config::load(&repo.git);
-        let app = App::new(repo.empty_tree.clone(), marks, WatchStatus::Live).with_clock(fixed_now);
+        let loaded = Config::load(None, &repo.git);
+        let mut cfg = loaded.config;
+        // Highlighting is opt-in per test (`with_syntax`), for speed.
+        cfg.syntax = false;
+        f(&mut cfg);
+        let app = App::new(
+            repo.empty_tree.clone(),
+            marks,
+            WatchStatus::Live,
+            cfg.clone(),
+        )
+        .with_clock(fixed_now)
+        .with_settings(loaded.sources, None, Some("truecolor".into()), None);
         let worker = Worker::new(repo.clone(), cfg, None);
         let mut h = Harness {
             app,
             worker,
             repo,
             edits: Vec::new(),
+            saved: Vec::new(),
         };
         let fx = h.app.start();
         h.run(fx);
@@ -293,21 +316,36 @@ impl Harness {
                         seq,
                         result: self.worker.refresh(kind, &opts).map(Box::new),
                     }),
-                    Effect::LoadPatch { seq, spec, files } => Some(Msg::PatchLoaded {
+                    Effect::LoadPatch {
                         seq,
-                        result: self.worker.patch(&spec, &files),
+                        spec,
+                        files,
+                        opts,
+                    } => Some(Msg::PatchLoaded {
+                        seq,
+                        result: self.worker.patch(&spec, &files, opts),
                     }),
                     Effect::LoadFile {
                         seq,
                         index,
                         spec,
                         file,
+                        opts,
                     } => Some(Msg::FileLoaded {
                         seq,
                         index,
-                        result: refresh::load_file(&self.repo, &spec, &file)
+                        result: refresh::load_file(&self.repo, &spec, &file, opts)
                             .map_err(|e| e.to_string()),
                     }),
+                    Effect::SaveSetting { key, value } => {
+                        self.saved.push((key, value));
+                        None
+                    }
+                    Effect::SetWorkerConfig(c) => {
+                        self.worker.set_config(*c);
+                        None
+                    }
+                    Effect::SetSyntaxTheme(_) | Effect::EditConfig => None,
                     Effect::Highlight {
                         index,
                         key,
@@ -339,7 +377,7 @@ impl Harness {
 
     /// Turns syntax highlighting on (it is off by default in tests).
     pub fn with_syntax(mut self) -> Self {
-        self.app.syntax = true;
+        self.app.config.syntax = true;
         self
     }
 
@@ -358,6 +396,8 @@ impl Harness {
                 "space" => (KeyCode::Char(' '), KeyModifiers::NONE),
                 "down" => (KeyCode::Down, KeyModifiers::NONE),
                 "pgdn" => (KeyCode::PageDown, KeyModifiers::NONE),
+                "left" => (KeyCode::Left, KeyModifiers::NONE),
+                "right" => (KeyCode::Right, KeyModifiers::NONE),
                 "backtab" => (KeyCode::BackTab, KeyModifiers::SHIFT),
                 s if s.starts_with("ctrl-") => (
                     KeyCode::Char(s.chars().last().unwrap()),

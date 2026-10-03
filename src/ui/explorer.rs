@@ -32,7 +32,8 @@ pub fn split(app: &App, body: Rect) -> Split {
             drawer: true,
         }
     } else {
-        let w = (body.width as u32 * 30 / 100).clamp(28, 50) as u16;
+        let pct = app.config.explorer_width as u32;
+        let w = (body.width as u32 * pct / 100).clamp(20, 100) as u16;
         let w = w.min(body.width.saturating_sub(20));
         Split {
             explorer: Some(Rect { width: w, ..body }),
@@ -52,9 +53,11 @@ pub fn draw(f: &mut Frame, area: Rect, app: &mut App, drawer: bool) {
         let d = app.diff.as_ref().expect("diff open");
         app.viewed_count(&d.files)
     };
+    let border = app.glyphs().border;
     let Some(d) = app.diff.as_mut() else { return };
     let n = d.files.len();
     let block = Block::bordered()
+        .border_set(border)
         .title(format!(" Files · {viewed}/{n} viewed "))
         .border_style(theme::border(focused));
     let inner = block.inner(area);

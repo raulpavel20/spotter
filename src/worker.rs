@@ -7,7 +7,7 @@ use std::thread;
 
 use crate::config::Config;
 use crate::git::Repo;
-use crate::git::diff::DiffSpec;
+use crate::git::diff::{DiffOpts, DiffSpec};
 use crate::model::FileChange;
 use crate::msg::{Msg, RefreshKind};
 use crate::refresh::{self, Cache, LoadedPatch, RefreshOpts, Snapshot};
@@ -23,21 +23,26 @@ pub enum Request {
         seq: u64,
         spec: DiffSpec,
         files: Vec<FileChange>,
+        opts: DiffOpts,
     },
     File {
         seq: u64,
         index: usize,
         spec: DiffSpec,
         file: FileChange,
+        opts: DiffOpts,
     },
+    /// New settings (collapse rules, trunk depth). A refresh follows.
+    SetConfig(Config),
 }
 
 /// What one round of the worker does after draining its queue.
 #[derive(Debug, Default)]
 pub struct Batch {
     pub refresh: Option<(u64, RefreshKind, RefreshOpts)>,
-    pub patch: Option<(u64, DiffSpec, Vec<FileChange>)>,
-    pub files: Vec<(u64, usize, DiffSpec, FileChange)>,
+    pub patch: Option<(u64, DiffSpec, Vec<FileChange>, DiffOpts)>,
+    pub files: Vec<(u64, usize, DiffSpec, FileChange, DiffOpts)>,
+    pub config: Option<Config>,
 }
 
 /// Coalesces queued requests: one refresh (the strongest kind, the latest
@@ -55,9 +60,14 @@ pub fn coalesce(reqs: impl IntoIterator<Item = Request>) -> Batch {
                     None => (seq, kind, opts),
                 });
             }
-            Request::Patch { seq, spec, files } => {
-                if b.patch.as_ref().is_none_or(|(s, _, _)| seq >= *s) {
-                    b.patch = Some((seq, spec, files));
+            Request::Patch {
+                seq,
+                spec,
+                files,
+                opts,
+            } => {
+                if b.patch.as_ref().is_none_or(|(s, ..)| seq >= *s) {
+                    b.patch = Some((seq, spec, files, opts));
                 }
             }
             Request::File {
@@ -65,11 +75,13 @@ pub fn coalesce(reqs: impl IntoIterator<Item = Request>) -> Batch {
                 index,
                 spec,
                 file,
+                opts,
             } => {
-                if !b.files.iter().any(|(s, i, _, _)| *s == seq && *i == index) {
-                    b.files.push((seq, index, spec, file));
+                if !b.files.iter().any(|(s, i, ..)| *s == seq && *i == index) {
+                    b.files.push((seq, index, spec, file, opts));
                 }
             }
+            Request::SetConfig(cfg) => b.config = Some(cfg),
         }
     }
     b
@@ -77,8 +89,8 @@ pub fn coalesce(reqs: impl IntoIterator<Item = Request>) -> Batch {
 
 /// Byte-budgeted LRU of immutable (commit) patches.
 struct PatchCache {
-    map: HashMap<DiffSpec, (LoadedPatch, usize)>,
-    order: VecDeque<DiffSpec>,
+    map: HashMap<(DiffSpec, DiffOpts), (LoadedPatch, usize)>,
+    order: VecDeque<(DiffSpec, DiffOpts)>,
     bytes: usize,
     budget: usize,
 }
@@ -103,7 +115,7 @@ impl PatchCache {
         }
     }
 
-    fn get(&mut self, k: &DiffSpec, files: &[FileChange]) -> Option<LoadedPatch> {
+    fn get(&mut self, k: &(DiffSpec, DiffOpts), files: &[FileChange]) -> Option<LoadedPatch> {
         let (p, _) = self.map.get(k)?;
         if p.files != files {
             return None;
@@ -114,7 +126,7 @@ impl PatchCache {
         Some(p)
     }
 
-    fn put(&mut self, k: DiffSpec, p: LoadedPatch) {
+    fn put(&mut self, k: (DiffSpec, DiffOpts), p: LoadedPatch) {
         let size = patch_bytes(&p);
         if size > self.budget {
             return;
@@ -177,17 +189,29 @@ impl Worker {
         Ok(snap)
     }
 
-    pub fn patch(&mut self, spec: &DiffSpec, files: &[FileChange]) -> Result<LoadedPatch, String> {
+    pub fn patch(
+        &mut self,
+        spec: &DiffSpec,
+        files: &[FileChange],
+        opts: DiffOpts,
+    ) -> Result<LoadedPatch, String> {
+        let key = (spec.clone(), opts);
         if !spec.is_volatile() {
-            if let Some(p) = self.patches.get(spec, files) {
+            if let Some(p) = self.patches.get(&key, files) {
                 return Ok(p);
             }
         }
-        let p = refresh::load_patch(&self.repo, spec, files).map_err(|e| e.to_string())?;
+        let p = refresh::load_patch(&self.repo, spec, files, opts).map_err(|e| e.to_string())?;
         if !spec.is_volatile() && !p.lazy {
-            self.patches.put(spec.clone(), p.clone());
+            self.patches.put(key, p.clone());
         }
         Ok(p)
+    }
+
+    /// New settings; merge file lists depend on nothing configurable, so
+    /// only collapse flags and the base change (on the next refresh).
+    pub fn set_config(&mut self, cfg: Config) {
+        self.cfg = cfg;
     }
 
     fn run(mut self, rx: Receiver<Request>, out: Sender<Msg>) {
@@ -195,21 +219,24 @@ impl Worker {
             let mut reqs = vec![first];
             reqs.extend(rx.try_iter());
             let batch = coalesce(reqs);
+            if let Some(cfg) = batch.config {
+                self.set_config(cfg);
+            }
             if let Some((seq, kind, opts)) = batch.refresh {
                 let result = self.refresh(kind, &opts).map(Box::new);
                 if out.send(Msg::Refreshed { seq, result }).is_err() {
                     return;
                 }
             }
-            if let Some((seq, spec, files)) = batch.patch {
-                let result = self.patch(&spec, &files);
+            if let Some((seq, spec, files, opts)) = batch.patch {
+                let result = self.patch(&spec, &files, opts);
                 if out.send(Msg::PatchLoaded { seq, result }).is_err() {
                     return;
                 }
             }
-            for (seq, index, spec, file) in batch.files {
+            for (seq, index, spec, file, opts) in batch.files {
                 let result =
-                    refresh::load_file(&self.repo, &spec, &file).map_err(|e| e.to_string());
+                    refresh::load_file(&self.repo, &spec, &file, opts).map_err(|e| e.to_string());
                 if out.send(Msg::FileLoaded { seq, index, result }).is_err() {
                     return;
                 }
@@ -246,6 +273,7 @@ mod tests {
                 seq: 1,
                 spec: spec("a"),
                 files: vec![],
+                opts: DiffOpts::default(),
             },
             Request::Refresh {
                 seq: 2,
@@ -264,6 +292,7 @@ mod tests {
                 seq: 2,
                 spec: spec("b"),
                 files: vec![],
+                opts: DiffOpts::default(),
             },
         ]);
         let (seq, kind, opts) = b.refresh.unwrap();

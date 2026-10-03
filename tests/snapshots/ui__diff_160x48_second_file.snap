@@ -1,5 +1,6 @@
 ---
 source: tests/ui.rs
+assertion_line: 65
 expression: "h.render(160, 48)"
 ---
  aa31857 Add tooltips · src/tooltip.gd (2/2)                                                                                                       ● 0/2 viewed
@@ -49,4 +50,4 @@ expression: "h.render(160, 48)"
 
 
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- ]/[ hunk · }/{ file · f files · space viewed · n/p commit · e edit · esc back
+ ]/[ hunk · }/{ file · enter collapse · space viewed · f files · e edit · n/p commit · W hide whitespace · esc back

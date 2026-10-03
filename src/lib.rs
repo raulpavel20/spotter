@@ -2,6 +2,7 @@
 
 pub mod app;
 pub mod config;
+pub mod config_file;
 pub mod diffview;
 pub mod editor;
 pub mod git;

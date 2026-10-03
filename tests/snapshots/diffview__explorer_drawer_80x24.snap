@@ -1,5 +1,6 @@
 ---
 source: tests/diffview.rs
+assertion_line: 136
 expression: "h.render(80, 24)"
 ---
  014ef17 three files · alpha.rs (1/3)                              ● 0/3 viewed
@@ -25,4 +26,4 @@ expression: "h.render(80, 24)"
 │                                          │
 └──────────────────────────────────────────┘
 ────────────────────────────────────────────────────────────────────────────────
- enter go to file · space viewed · tab diff · f close
+ j/k file · enter read · space viewed · e edit · →/tab diff · f close

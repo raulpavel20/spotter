@@ -1,14 +1,19 @@
 //! Application state and `update(msg) -> effects`. No I/O happens here
 //! (marks are only written when main executes `Effect::SaveMarks`).
 
+use std::collections::HashMap;
+use std::path::PathBuf;
+
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
+use crate::config::{Config, Kind, Loaded, SETTINGS, Source, Value};
 use crate::diffview::DiffView;
-use crate::git::diff::DiffSpec;
+use crate::git::diff::{DiffOpts, DiffSpec};
 use crate::model::{Commit, FileChange, Status, TargetId};
 use crate::msg::{EditRequest, Effect, Msg, RefreshKind, WatchStatus};
 use crate::refresh::{HeadChange, RefreshOpts, Snapshot};
 use crate::review::{self, Marks};
+use crate::ui::glyphs::{self, Glyphs};
 use crate::ui::palette::Palette;
 
 /// Toasts last 3 s; polling runs every 2 s (in 250 ms ticks).
@@ -47,13 +52,21 @@ impl Glyph {
         }
     }
 
-    pub fn symbol(self) -> &'static str {
+    pub fn symbol(self, g: &Glyphs) -> &'static str {
         match self {
-            Glyph::None => "●",
-            Glyph::Some => "◐",
-            Glyph::All => "✓",
+            Glyph::None => g.unviewed,
+            Glyph::Some => g.partial,
+            Glyph::All => g.viewed,
         }
     }
+}
+
+/// The settings screen's cursor.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SettingsState {
+    /// Index into `config::SETTINGS`.
+    pub sel: usize,
+    pub offset: usize,
 }
 
 pub struct App {
@@ -73,10 +86,18 @@ pub struct App {
     pub toast: Option<(String, u32)>,
     pub help: bool,
     pub size: (u16, u16),
-    pub tab_width: usize,
-    /// Request syntax highlighting for diff files.
-    pub syntax: bool,
+    pub config: Config,
+    /// Where each setting's value came from.
+    pub sources: HashMap<&'static str, Source>,
+    /// The settings file, for display.
+    pub config_path: Option<PathBuf>,
+    /// The settings screen, when open.
+    pub settings: Option<SettingsState>,
+    /// `W`: ignore whitespace for this session, overriding the setting.
+    pub ws_override: Option<bool>,
     pub palette: Palette,
+    /// `COLORTERM` and `COLORFGBG`, captured at start for the palette.
+    env: (Option<String>, Option<String>),
     /// The file explorer in the diff view (remembered for the session).
     pub explorer_open: bool,
     pub diff_focus: DiffFocus,
@@ -96,7 +117,9 @@ fn ctrl(k: &KeyEvent, c: char) -> bool {
 }
 
 impl App {
-    pub fn new(empty_tree: String, marks: Marks, watch: WatchStatus) -> App {
+    pub fn new(empty_tree: String, marks: Marks, watch: WatchStatus, config: Config) -> App {
+        let env = (Some("truecolor".to_owned()), None);
+        let palette = Palette::detect(Some(&config.background), env.0.as_deref(), env.1.as_deref());
         App {
             empty_tree,
             snap: None,
@@ -108,7 +131,7 @@ impl App {
             focus: Focus::Timeline,
             diff: None,
             opts: RefreshOpts {
-                include_wt: true,
+                include_wt: config.total_includes_uncommitted,
                 ..RefreshOpts::default()
             },
             marks,
@@ -116,9 +139,13 @@ impl App {
             toast: None,
             help: false,
             size: (80, 24),
-            tab_width: 4,
-            syntax: false,
-            palette: Palette::default(),
+            config,
+            sources: HashMap::new(),
+            config_path: None,
+            settings: None,
+            ws_override: None,
+            palette,
+            env,
             explorer_open: false,
             diff_focus: DiffFocus::Diff,
             seq: 0,
@@ -133,6 +160,50 @@ impl App {
     pub fn with_clock(mut self, clock: fn() -> i64) -> Self {
         self.clock = clock;
         self
+    }
+
+    /// Where settings came from, and the environment for colors.
+    pub fn with_settings(
+        mut self,
+        sources: HashMap<&'static str, Source>,
+        path: Option<PathBuf>,
+        colorterm: Option<String>,
+        colorfgbg: Option<String>,
+    ) -> Self {
+        self.sources = sources;
+        self.config_path = path;
+        self.env = (colorterm, colorfgbg);
+        self.palette = self.detect_palette();
+        self
+    }
+
+    fn detect_palette(&self) -> Palette {
+        Palette::detect(
+            Some(&self.config.background),
+            self.env.0.as_deref(),
+            self.env.1.as_deref(),
+        )
+    }
+
+    /// The syntax theme for the current settings and background.
+    pub fn syntax_theme(&self) -> two_face::theme::EmbeddedThemeName {
+        crate::highlight::theme_name(self.config.syntax_theme.as_deref(), self.palette.background)
+    }
+
+    pub fn glyphs(&self) -> &'static Glyphs {
+        if self.config.ascii {
+            &glyphs::ASCII
+        } else {
+            &glyphs::UNICODE
+        }
+    }
+
+    /// Patch options in effect: settings plus the session's `W` toggle.
+    pub fn diff_opts(&self) -> DiffOpts {
+        DiffOpts {
+            context: self.config.context_lines,
+            ignore_ws: self.ws_override.unwrap_or(self.config.ignore_whitespace),
+        }
     }
 
     pub fn start(&mut self) -> Vec<Effect> {
@@ -256,6 +327,11 @@ impl App {
                 if ctrl(&k, 'c') {
                     return vec![Effect::Quit];
                 }
+                if self.settings.is_some() {
+                    let mut fx = self.settings_key(k);
+                    fx.extend(self.view_effects());
+                    return fx;
+                }
                 let mut fx = if self.diff.is_some() {
                     self.diff_key(k)
                 } else {
@@ -337,12 +413,13 @@ impl App {
             Msg::Highlighted { key, hl, .. } => {
                 if let Some(d) = &mut self.diff {
                     d.hl_requested.remove(&key);
-                    if d.keys.contains(&key) {
+                    if d.hl_keys.contains(&key) {
                         d.highlights.insert(key, hl);
                     }
                 }
                 Vec::new()
             }
+            Msg::ConfigReloaded(loaded) => self.reload_config(*loaded),
             Msg::Tick => {
                 self.ticks = self.ticks.wrapping_add(1);
                 if let Some((_, left)) = &mut self.toast {
@@ -359,9 +436,14 @@ impl App {
         }
     }
 
-    /// Below `ui::WIDE` columns the explorer is a drawer.
+    /// Below the wide breakpoint, panels stack and the explorer is a
+    /// drawer.
     pub fn narrow(&self) -> bool {
-        self.size.0 < crate::ui::WIDE
+        self.narrow_at(self.size.0)
+    }
+
+    pub fn narrow_at(&self, width: u16) -> bool {
+        width < self.config.wide_breakpoint
     }
 
     /// Loads and highlighting for whatever the diff viewport shows.
@@ -378,13 +460,13 @@ impl App {
         let Some(d) = &mut self.diff else {
             return Vec::new();
         };
-        if !self.syntax || d.loading {
+        if !self.config.syntax || d.loading {
             return Vec::new();
         }
         let mut fx = Vec::new();
         for i in d.visible_files() {
             let Some(p) = &d.patches[i] else { continue };
-            let key = &d.keys[i];
+            let key = &d.hl_keys[i];
             if p.binary
                 || p.hunks.is_empty()
                 || d.is_folded(i)
@@ -422,6 +504,7 @@ impl App {
                 index: i,
                 spec: d.spec.clone(),
                 file: d.files[i].clone(),
+                opts: d.opts,
             });
         }
         fx
@@ -503,6 +586,7 @@ impl App {
             seq: self.patch_gen,
             spec,
             files,
+            opts: d.opts,
         }]
     }
 
@@ -627,7 +711,9 @@ impl App {
         if let Some(r) = self.row_of(&id) {
             self.select(r);
         }
-        let mut view = DiffView::new(id, spec.clone(), files.clone());
+        let opts = self.diff_opts();
+        let mut view = DiffView::new(id, spec.clone(), files.clone(), opts);
+        view.collapse_viewed = self.config.collapse_viewed;
         view.viewport = diff_viewport(self.size.1);
         if let Some(i) = file {
             view.jump_to_file(i);
@@ -635,12 +721,163 @@ impl App {
         }
         self.diff = Some(view);
         self.diff_focus = DiffFocus::Diff;
+        // A drawer would cover the diff, so only a side panel opens itself.
+        if self.config.explorer_on_open && !self.narrow() {
+            self.explorer_open = true;
+        }
+        self.sync_viewed();
         self.patch_gen += 1;
         vec![Effect::LoadPatch {
             seq: self.patch_gen,
             spec,
             files,
+            opts,
         }]
+    }
+
+    /// Reloads the open diff if its patch options changed.
+    fn reload_diff(&mut self) -> Vec<Effect> {
+        let opts = self.diff_opts();
+        let Some(d) = &mut self.diff else {
+            return Vec::new();
+        };
+        if d.opts == opts {
+            return Vec::new();
+        }
+        d.set_opts(opts);
+        self.patch_gen += 1;
+        vec![Effect::LoadPatch {
+            seq: self.patch_gen,
+            spec: d.spec.clone(),
+            files: d.files.clone(),
+            opts,
+        }]
+    }
+
+    // --- settings -----------------------------------------------------------
+
+    /// What a settings change needs: new colors, a reload, a refresh…
+    fn config_changed(&mut self, old: &Config) -> Vec<Effect> {
+        let new = self.config.clone();
+        let mut fx = Vec::new();
+        if old.background != new.background || old.syntax_theme != new.syntax_theme {
+            self.palette = self.detect_palette();
+            fx.push(Effect::SetSyntaxTheme(self.syntax_theme()));
+            if let Some(d) = &mut self.diff {
+                d.highlights.clear();
+                d.hl_requested.clear();
+            }
+        }
+        if old.collapse_lines != new.collapse_lines
+            || old.collapse != new.collapse
+            || old.trunk_depth != new.trunk_depth
+        {
+            fx.push(Effect::SetWorkerConfig(Box::new(new.clone())));
+            fx.push(self.refresh(RefreshKind::Full));
+        }
+        if old.total_includes_uncommitted != new.total_includes_uncommitted {
+            self.opts.include_wt = new.total_includes_uncommitted;
+            fx.push(self.refresh(RefreshKind::Worktree));
+        }
+        if let Some(d) = &mut self.diff {
+            d.set_collapse_viewed(new.collapse_viewed);
+        }
+        fx.extend(self.reload_diff());
+        fx.extend(self.view_effects());
+        fx
+    }
+
+    /// Changes one setting from the settings screen (`None` resets it).
+    pub fn set_setting(&mut self, key: &'static str, value: Option<Value>) -> Vec<Effect> {
+        let old = self.config.clone();
+        let effective = value.clone().unwrap_or_else(|| Config::default().get(key));
+        if let Err(e) = self.config.set(key, effective) {
+            self.toast(e);
+            return Vec::new();
+        }
+        if self.sources.get(key) == Some(&Source::Git) {
+            // Saved for other repositories, but git config wins here.
+            let git = crate::config::setting(key).map_or("", |s| s.git);
+            let restored = old.get(key);
+            let _ = self.config.set(key, restored);
+            self.toast(format!("saved · git config {git} overrides it here"));
+        } else if value.is_some() {
+            self.sources.insert(key, Source::File);
+        } else {
+            self.sources.remove(key);
+        }
+        let mut fx = vec![Effect::SaveSetting { key, value }];
+        fx.extend(self.config_changed(&old));
+        fx
+    }
+
+    /// Settings re-read from the file (after `e`, or an outside edit).
+    fn reload_config(&mut self, loaded: Loaded) -> Vec<Effect> {
+        let old = self.config.clone();
+        self.config = loaded.config;
+        self.sources = loaded.sources;
+        if let Some(w) = loaded.warnings.first() {
+            self.error = Some(format!("settings: {w}"));
+        }
+        self.config_changed(&old)
+    }
+
+    /// The next value of a setting in direction `dir` (+1 / -1).
+    fn step_value(&self, i: usize, dir: i64) -> Option<Value> {
+        let def = SETTINGS.get(i)?;
+        let cur = self.config.get(def.key);
+        let cycle = |opts: &[&str], t: &str| {
+            let n = opts.len() as i64;
+            let at = opts
+                .iter()
+                .position(|o| o.eq_ignore_ascii_case(t))
+                .unwrap_or(0) as i64;
+            Value::Text(opts[((at + dir).rem_euclid(n)) as usize].to_owned())
+        };
+        match (def.kind, cur) {
+            (Kind::Bool, Value::Bool(b)) => Some(Value::Bool(!b)),
+            (Kind::Int { min, max, step }, Value::Int(n)) => {
+                Some(Value::Int((n + dir * step).clamp(min, max)))
+            }
+            (Kind::Choice(opts), Value::Text(t)) => Some(cycle(opts, &t)),
+            (Kind::Theme, Value::Text(t)) => Some(cycle(&crate::highlight::theme_choices(), &t)),
+            _ => None,
+        }
+    }
+
+    fn settings_key(&mut self, k: KeyEvent) -> Vec<Effect> {
+        let Some(st) = self.settings.as_mut() else {
+            return Vec::new();
+        };
+        let last = SETTINGS.len() - 1;
+        let change = |app: &mut App, dir: i64| {
+            let i = app.settings.map_or(0, |s| s.sel);
+            match app.step_value(i, dir) {
+                Some(v) => app.set_setting(SETTINGS[i].key, Some(v)),
+                None => {
+                    app.toast("edit this one in the file: press e");
+                    Vec::new()
+                }
+            }
+        };
+        match k.code {
+            KeyCode::Char('j') | KeyCode::Down => st.sel = (st.sel + 1).min(last),
+            KeyCode::Char('k') | KeyCode::Up => st.sel = st.sel.saturating_sub(1),
+            KeyCode::Char('g') | KeyCode::Home => st.sel = 0,
+            KeyCode::Char('G') | KeyCode::End => st.sel = last,
+            KeyCode::Char('l') | KeyCode::Right | KeyCode::Enter | KeyCode::Char(' ') => {
+                return change(self, 1);
+            }
+            KeyCode::Char('h') | KeyCode::Left => return change(self, -1),
+            KeyCode::Char('d') => {
+                let key = SETTINGS[st.sel].key;
+                return self.set_setting(key, None);
+            }
+            KeyCode::Char('e') => return vec![Effect::EditConfig],
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char(',') => self.settings = None,
+            _ => {}
+        }
+        Vec::new()
     }
 
     fn close_diff(&mut self) {
@@ -708,6 +945,10 @@ impl App {
             self.help = true;
             return Some(Vec::new());
         }
+        if key_is(k, ',') {
+            self.settings = Some(SettingsState::default());
+            return Some(Vec::new());
+        }
         if key_is(k, 'i') {
             self.opts.include_wt = !self.opts.include_wt;
             self.toast(if self.opts.include_wt {
@@ -749,7 +990,10 @@ impl App {
                     self.focus = Focus::Files;
                     return Vec::new();
                 }
-                None => self.toast("nothing left to review ✓"),
+                None => {
+                    let v = self.glyphs().viewed;
+                    self.toast(format!("nothing left to review {v}"))
+                }
             },
             KeyCode::Char('n') => {
                 if let Some(r) = self.step_commit(self.sel, -1) {
@@ -882,9 +1126,9 @@ impl App {
                     return self.edit(id, f, None);
                 }
             }
-            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('h') | KeyCode::Left => {
-                self.leave_explorer()
-            }
+            KeyCode::Esc | KeyCode::Char('q') => self.leave_explorer(),
+            // The explorer is the leftmost panel: nothing further left.
+            KeyCode::Char('h') | KeyCode::Left => {}
             // Everything else (n/p, w/b, u, m…) works as in the diff.
             _ => {
                 self.diff_focus = DiffFocus::Diff;
@@ -943,7 +1187,14 @@ impl App {
             KeyCode::Char('{') => {
                 d.prev_file();
             }
-            KeyCode::Char('h') | KeyCode::Left => d.scroll_h(-8),
+            // At the left edge, ← moves into the open explorer.
+            KeyCode::Char('h') | KeyCode::Left => {
+                if d.hscroll == 0 && self.explorer_open {
+                    self.diff_focus = DiffFocus::Explorer;
+                } else {
+                    d.scroll_h(-8);
+                }
+            }
             KeyCode::Char('l') | KeyCode::Right => d.scroll_h(8),
             KeyCode::Enter | KeyCode::Char('o') => {
                 if let Some(i) = d.current_file() {
@@ -986,8 +1237,21 @@ impl App {
                     let first = self.first_unviewed(self.files_of(&id)).unwrap_or(0);
                     return self.open_diff(id, Some(first));
                 }
-                None => self.toast("nothing left to review ✓"),
+                None => {
+                    let v = self.glyphs().viewed;
+                    self.toast(format!("nothing left to review {v}"))
+                }
             },
+            KeyCode::Char('W') => {
+                let on = !self.diff_opts().ignore_ws;
+                self.ws_override = Some(on);
+                self.toast(if on {
+                    "whitespace-only changes hidden (this session)"
+                } else {
+                    "whitespace changes shown (this session)"
+                });
+                return self.reload_diff();
+            }
             _ => {}
         }
         Vec::new()
@@ -1027,7 +1291,12 @@ impl App {
             self.diff.as_mut().expect("diff open").jump_to_file(i);
             return fx;
         }
+        let done = self.glyphs().viewed;
         if let TargetId::Commit(_) = target {
+            if !self.config.space_continues {
+                self.toast(format!("commit reviewed {done}"));
+                return fx;
+            }
             let from = self.row_of(&target).unwrap_or(1);
             let commits = self.commits();
             let newer = (1..from)
@@ -1039,9 +1308,9 @@ impl App {
                 fx.extend(self.open_diff(id, Some(first)));
                 return fx;
             }
-            self.toast("all commits reviewed ✓");
+            self.toast(format!("all commits reviewed {done}"));
         } else {
-            self.toast("all files viewed ✓");
+            self.toast(format!("all files viewed {done}"));
         }
         fx
     }

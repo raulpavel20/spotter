@@ -94,8 +94,11 @@ fn explorer_side_panel_on_wide_panes() {
     let r = three_files();
     let mut h = Harness::in_memory(&r);
     h.render(160, 40);
-    h.keys("j enter enter f");
+    // Wide panes open diffs with the explorer showing, focus on the diff.
+    h.keys("j enter enter");
     assert!(h.app.explorer_open);
+    assert_eq!(h.app.diff_focus, DiffFocus::Diff);
+    h.keys("tab");
     assert_eq!(h.app.diff_focus, DiffFocus::Explorer);
     insta::assert_snapshot!("explorer_side_160x40", h.render(160, 40));
     // Moving in the explorer moves the diff.
@@ -148,7 +151,7 @@ fn diff_keys_still_work_from_the_explorer() {
     r.commit_file("delta.rs", "// d\n", "fourth file");
     let mut h = Harness::in_memory(&r);
     h.render(160, 40);
-    h.keys("j enter enter f p");
+    h.keys("j enter enter tab p");
     // `p` (older commit) went through to the diff, and the explorer stays.
     let d = h.app.diff.as_ref().unwrap();
     assert_eq!(d.files.len(), 3);
@@ -241,7 +244,7 @@ fn pager_scrolling_tracks_the_file_at_the_top() {
 #[test]
 fn space_folds_viewed_files_and_enter_toggles() {
     let r = three_files();
-    let mut h = Harness::in_memory(&r);
+    let mut h = Harness::configured(&r, |c| c.explorer_on_open = false);
     h.render(100, 30);
     h.keys("j enter enter space");
     let d = h.app.diff.as_ref().unwrap();
@@ -275,4 +278,69 @@ fn separators_and_hunk_spacing_render() {
     let mut h = Harness::in_memory(&r);
     h.keys("j enter enter");
     insta::assert_snapshot!("separators_100x40", h.render(100, 40));
+}
+
+#[test]
+fn arrow_keys_move_between_explorer_and_diff() {
+    let r = three_files();
+    let mut h = Harness::in_memory(&r);
+    h.render(160, 40);
+    h.keys("j enter enter");
+    assert!(h.app.explorer_open);
+    assert_eq!(h.app.diff_focus, DiffFocus::Diff);
+    h.keys("left");
+    assert_eq!(h.app.diff_focus, DiffFocus::Explorer, "← at the left edge");
+    // Arrows are directional: nothing is left of the explorer.
+    h.keys("left h");
+    assert_eq!(
+        h.app.diff_focus,
+        DiffFocus::Explorer,
+        "← in the explorer stays put"
+    );
+    h.keys("right");
+    assert_eq!(h.app.diff_focus, DiffFocus::Diff);
+    h.keys("left");
+    assert_eq!(h.app.diff_focus, DiffFocus::Explorer, "and back again");
+    // Scrolled right, ← scrolls back first.
+    h.keys("right l l");
+    assert_eq!(h.app.diff.as_ref().unwrap().hscroll, 16);
+    h.keys("left left");
+    assert_eq!(h.app.diff_focus, DiffFocus::Diff);
+    assert_eq!(h.app.diff.as_ref().unwrap().hscroll, 0);
+    h.keys("left");
+    assert_eq!(h.app.diff_focus, DiffFocus::Explorer);
+    // With the explorer hidden, ← just stays put.
+    h.keys("f left");
+    assert!(!h.app.explorer_open);
+    assert_eq!(h.app.diff_focus, DiffFocus::Diff);
+}
+
+#[test]
+fn diff_frame_shows_focus_when_the_explorer_is_open() {
+    use ratatui::style::Modifier;
+    let r = three_files();
+    let mut h = Harness::in_memory(&r);
+    h.render(160, 40);
+    h.keys("j enter enter");
+    let dimmed = |h: &mut Harness| {
+        let buf = h.render_buffer(160, 40);
+        // The rules above and below the diff, at the right edge.
+        let top = buf[(159, 1)].modifier.contains(Modifier::DIM);
+        let bottom = buf[(159, 38)].modifier.contains(Modifier::DIM);
+        assert_eq!(top, bottom);
+        // The explorer's border at its top-left corner.
+        (top, buf[(0, 1)].modifier.contains(Modifier::DIM))
+    };
+    assert_eq!(h.app.diff_focus, DiffFocus::Diff);
+    assert_eq!(
+        dimmed(&mut h),
+        (false, true),
+        "diff focused: bright frame, dim explorer"
+    );
+    h.keys("tab");
+    assert_eq!(
+        dimmed(&mut h),
+        (true, false),
+        "explorer focused: the reverse"
+    );
 }

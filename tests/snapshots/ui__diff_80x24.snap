@@ -1,5 +1,6 @@
 ---
 source: tests/ui.rs
+assertion_line: 63
 expression: "h.render(80, 24)"
 ---
  aa31857 Add tooltips · assets/theme.tres (1/2)                    ● 0/2 viewed
@@ -25,4 +26,4 @@ expression: "h.render(80, 24)"
 
 
 ────────────────────────────────────────────────────────────────────────────────
- ]/[ hunk · }/{ file · f files · space viewed · n/p commit · e edit · esc back
+ ]/[ hunk · }/{ file · enter collapse · space viewed · f files · esc back

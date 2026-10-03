@@ -5,6 +5,7 @@ use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 
+use super::glyphs::Glyphs;
 use super::text::left_right;
 use super::theme;
 use crate::app::{App, Focus};
@@ -69,7 +70,9 @@ fn files_label(n: usize) -> String {
 
 pub fn draw(f: &mut Frame, area: Rect, app: &mut App) {
     let focused = app.focus == Focus::Timeline;
+    let gl = app.glyphs();
     let block = Block::bordered()
+        .border_set(gl.border)
         .title(" Timeline ")
         .border_style(theme::border(focused));
     let inner = block.inner(area);
@@ -120,10 +123,13 @@ pub fn draw(f: &mut Frame, area: Rect, app: &mut App) {
             break;
         }
         let selected = row == sel;
-        let mut left = vec![cursor(selected)];
+        let mut left = vec![cursor(selected, gl)];
         let mut right = Vec::new();
         if row == 0 {
-            left.push(Span::styled("◌ ", theme::banner()));
+            left.push(Span::styled(
+                format!("{} ", gl.uncommitted),
+                theme::banner(),
+            ));
             left.push(Span::raw("Uncommitted"));
             if snap.uncommitted.is_empty() {
                 right.push(Span::styled("clean", theme::dim()));
@@ -135,7 +141,7 @@ pub fn draw(f: &mut Frame, area: Rect, app: &mut App) {
         } else {
             let c = &snap.commits[row - 1];
             let g = app.glyph(&c.files);
-            left.push(Span::styled(format!("{} ", g.symbol()), theme::glyph(g)));
+            left.push(Span::styled(format!("{} ", g.symbol(gl)), theme::glyph(g)));
             left.push(Span::styled(c.short().to_owned(), theme::sha()));
             left.push(Span::raw(" "));
             left.push(Span::raw(c.subject.clone()));
@@ -164,14 +170,17 @@ pub fn draw(f: &mut Frame, area: Rect, app: &mut App) {
         let y = inner.y + list_h as u16;
         let buf = f.buffer_mut();
         let style = theme::border(focused);
-        buf.set_string(area.x, y, "├", style);
-        buf.set_string(inner.x, y, "─".repeat(width), style);
-        buf.set_string(area.x + area.width - 1, y, "┤", style);
+        buf.set_string(area.x, y, gl.tee_left, style);
+        buf.set_string(inner.x, y, gl.rule.repeat(width), style);
+        buf.set_string(area.x + area.width - 1, y, gl.tee_right, style);
 
         let total_files = snap.total.as_deref().unwrap_or_default();
         let t = total.expect("total stats");
         let selected = Some(sel) == app.sigma_row();
-        let mut left = vec![cursor(selected), Span::styled("Σ ", theme::bold())];
+        let mut left = vec![
+            cursor(selected, gl),
+            Span::styled(format!("{} ", gl.total), theme::bold()),
+        ];
         left.push(Span::raw(if snap.opts.include_wt {
             "Branch total"
         } else {
@@ -195,8 +204,8 @@ pub fn draw(f: &mut Frame, area: Rect, app: &mut App) {
     }
 }
 
-fn cursor(selected: bool) -> Span<'static> {
-    Span::raw(if selected { "▸" } else { " " })
+fn cursor(selected: bool, gl: &Glyphs) -> Span<'static> {
+    Span::raw(if selected { gl.cursor } else { " " })
 }
 
 pub fn style_row(line: Line<'static>, selected: bool, focused: bool) -> Line<'static> {

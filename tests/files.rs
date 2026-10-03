@@ -79,7 +79,7 @@ fn commit_files_with_renames_and_hostile_names() {
             let repo = r.repo();
             let id = TargetId::Commit(s.commits[0].sha.clone());
             let spec = s.spec(&id, &repo.empty_tree).unwrap();
-            let loaded = refresh::load_patch(&repo, &spec, files).unwrap();
+            let loaded = refresh::load_patch(&repo, &spec, files, Default::default()).unwrap();
             for (f, p) in files.iter().zip(&loaded.patches) {
                 let p = p.as_ref().unwrap();
                 if f.path != "new name.txt" {
@@ -109,7 +109,8 @@ fn uncommitted_patch_includes_untracked_and_no_newline() {
             let s = r.snapshot();
             let repo = r.repo();
             let spec = s.spec(&TargetId::Uncommitted, &repo.empty_tree).unwrap();
-            let loaded = refresh::load_patch(&repo, &spec, &s.uncommitted).unwrap();
+            let loaded =
+                refresh::load_patch(&repo, &spec, &s.uncommitted, Default::default()).unwrap();
             let a = loaded.patches[0].as_ref().unwrap();
             let kinds: Vec<_> = a.hunks[0].lines.iter().map(|l| l.kind).collect();
             assert_eq!(
@@ -137,7 +138,8 @@ fn binary_summary_sizes() {
     let repo = r.repo();
     let id = TargetId::Commit(s.commits[0].sha.clone());
     let spec = s.spec(&id, &repo.empty_tree).unwrap();
-    let loaded = refresh::load_patch(&repo, &spec, &s.commits[0].files).unwrap();
+    let loaded =
+        refresh::load_patch(&repo, &spec, &s.commits[0].files, Default::default()).unwrap();
     let p = loaded.patches[0].as_ref().unwrap();
     assert!(p.binary);
     assert_eq!((p.old_size, p.new_size), (Some(4), Some(10)));
@@ -203,7 +205,7 @@ fn linked_worktree() {
     assert_ne!(repo.git_dir, repo.common_dir);
     assert!(repo.git_dir.starts_with(&repo.common_dir));
     assert_eq!(repo.marks_path(), r.repo().marks_path());
-    let cfg = Config::load(&repo.git);
+    let cfg = Config::load(None, &repo.git).config;
     let s = refresh::full(
         &repo,
         &cfg,
@@ -242,7 +244,7 @@ fn merge_commit_remerge_and_first_parent() {
             // remerge-diff: only the conflict resolution.
             assert_eq!(paths(&merge.files), ["shared.txt"]);
             let repo = r.repo();
-            let cfg = Config::load(&repo.git);
+            let cfg = Config::load(None, &repo.git).config;
             let opts = RefreshOpts {
                 include_wt: true,
                 first_parent: HashSet::from([merge.sha.clone()]),
@@ -252,7 +254,8 @@ fn merge_commit_remerge_and_first_parent() {
             // Patch of the remerge diff.
             let id = TargetId::Commit(merge.sha.clone());
             let spec = s.spec(&id, &repo.empty_tree).unwrap();
-            let loaded = refresh::load_patch(&repo, &spec, &merge.files).unwrap();
+            let loaded =
+                refresh::load_patch(&repo, &spec, &merge.files, Default::default()).unwrap();
             assert!(
                 loaded.patches[0].as_ref().unwrap().hunks[0]
                     .lines

@@ -7,7 +7,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use super::files::{path_label, suffix};
-use super::header::draw_footer_with;
+use super::header::{Hint, draw_footer_hints, hint};
 use super::palette::Palette;
 use super::text::{self, left_right, styled_segs};
 use super::theme;
@@ -17,22 +17,63 @@ use crate::diffview::{DiffView, Row, RowKind};
 use crate::highlight::Run;
 use crate::model::{FileChange, LineKind, MODE_GITLINK, Stats, Status};
 
-const HINTS: &[(&str, &str)] = &[
-    ("]/[", "hunk"),
-    ("}/{", "file"),
-    ("f", "files"),
-    ("space", "viewed"),
-    ("n/p", "commit"),
-    ("e", "edit"),
-    ("esc", "back"),
-];
-
-const EXPLORER_HINTS: &[(&str, &str)] = &[
-    ("enter", "go to file"),
-    ("space", "viewed"),
-    ("tab", "diff"),
-    ("f", "close"),
-];
+/// Footer hints for the diff view, for the current file's state.
+fn diff_hints(app: &App, d: &DiffView) -> Vec<Hint> {
+    let cur = d.current_file();
+    let viewed = cur.is_some_and(|i| app.is_viewed(&d.files[i]));
+    let folded = cur.is_some_and(|i| d.is_folded(i));
+    let view = if viewed { "unview" } else { "viewed" };
+    if app.explorer_open && app.diff_focus == crate::app::DiffFocus::Explorer {
+        return vec![
+            hint("j/k", "file", 1),
+            hint("enter", if folded { "expand & read" } else { "read" }, 1),
+            hint("space", view, 1),
+            hint("e", "edit", 2),
+            hint("→/tab", "diff", 2),
+            hint("f", "close", 2),
+            hint("esc", "back", 3),
+        ];
+    }
+    let is_commit = matches!(d.target, crate::model::TargetId::Commit(_));
+    let is_merge = match &d.target {
+        crate::model::TargetId::Commit(sha) => app
+            .snap
+            .as_ref()
+            .and_then(|s| s.commit(sha))
+            .is_some_and(|c| c.is_merge()),
+        _ => false,
+    };
+    let mut h = vec![
+        hint("]/[", "hunk", 2),
+        hint("}/{", "file", 2),
+        hint("enter", if folded { "expand" } else { "collapse" }, 1),
+        hint("space", view, 1),
+    ];
+    if app.explorer_open {
+        h.push(hint("←/tab", "files", 2));
+        h.push(hint("f", "hide files", 3));
+    } else {
+        h.push(hint("f", "files", 2));
+    }
+    h.push(hint("e", "edit", 2));
+    if is_merge {
+        h.push(hint("m", "merge diff mode", 2));
+    }
+    if is_commit {
+        h.push(hint("n/p", "commit", 3));
+    }
+    h.push(hint(
+        "W",
+        if d.opts.ignore_ws {
+            "show whitespace"
+        } else {
+            "hide whitespace"
+        },
+        3,
+    ));
+    h.push(hint("esc", "back", 1));
+    h
+}
 
 pub fn draw(f: &mut Frame, area: Rect, app: &mut App) {
     let [head, rule1, body, rule2, foot] = Layout::vertical([
@@ -43,14 +84,23 @@ pub fn draw(f: &mut Frame, area: Rect, app: &mut App) {
         Constraint::Length(1),
     ])
     .areas(area);
-    let tab = app.tab_width;
+    let tab = app.config.tab_width;
+    let gl = app.glyphs();
     let split = super::explorer::split(app, body);
     {
         let d = app.diff.as_mut().expect("diff open");
         d.viewport = body.height.max(1) as usize;
         d.clamp_scroll();
     }
-    if let Some(ex) = split.explorer.filter(|_| !split.drawer) {
+    // The side panel's box spans the rule rows, so it lines up with the
+    // lines framing the diff.
+    let side = split.explorer.filter(|_| !split.drawer);
+    if let Some(ex) = side {
+        let ex = Rect {
+            y: rule1.y,
+            height: body.height + 2,
+            ..ex
+        };
         super::explorer::draw(f, ex, app, false);
     }
     let body = split.diff;
@@ -73,7 +123,7 @@ pub fn draw(f: &mut Frame, area: Rect, app: &mut App) {
     }
     let g = Glyph::of(viewed, n);
     let right = vec![
-        Span::styled(g.symbol().to_owned(), theme::glyph(g)),
+        Span::styled(g.symbol(gl).to_owned(), theme::glyph(g)),
         Span::raw(format!(" {viewed}/{n} viewed ")),
     ];
     f.render_widget(
@@ -81,20 +131,40 @@ pub fn draw(f: &mut Frame, area: Rect, app: &mut App) {
         head,
     );
 
-    let rule = "─".repeat(area.width as usize);
-    f.render_widget(
-        Paragraph::new(Line::styled(rule.clone(), theme::dim())),
-        rule1,
-    );
+    // The rules above and below the diff frame it. With the explorer open
+    // they act like its border: bright while the diff has focus, dim while
+    // the explorer has it.
+    let (rule1, rule2) = match side {
+        Some(_) => (
+            Rect {
+                x: body.x,
+                width: body.width,
+                ..rule1
+            },
+            Rect {
+                x: body.x,
+                width: body.width,
+                ..rule2
+            },
+        ),
+        None => (rule1, rule2),
+    };
+    let frame = if app.explorer_open {
+        theme::border(app.diff_focus == crate::app::DiffFocus::Diff)
+    } else {
+        theme::dim()
+    };
+    let rule = gl.rule.repeat(rule1.width as usize);
+    f.render_widget(Paragraph::new(Line::styled(rule.clone(), frame)), rule1);
     match &d.error {
         Some(e) => f.render_widget(
             Paragraph::new(Line::styled(
-                text::truncate_end(&format!("✕ {e}"), area.width as usize),
+                text::truncate_end(&format!("{} {e}", gl.error), rule2.width as usize),
                 theme::error(),
             )),
             rule2,
         ),
-        None => f.render_widget(Paragraph::new(Line::styled(rule, theme::dim())), rule2),
+        None => f.render_widget(Paragraph::new(Line::styled(rule, frame)), rule2),
     }
 
     let width = body.width as usize;
@@ -115,17 +185,7 @@ pub fn draw(f: &mut Frame, area: Rect, app: &mut App) {
     }
     f.render_widget(Paragraph::new(lines), body);
 
-    let explorer_focused = app.explorer_open && app.diff_focus == crate::app::DiffFocus::Explorer;
-    draw_footer_with(
-        f,
-        foot,
-        app,
-        if explorer_focused {
-            EXPLORER_HINTS
-        } else {
-            HINTS
-        },
-    );
+    draw_footer_hints(f, foot, app, diff_hints(app, d));
 }
 
 /// The explorer drawer, drawn over the diff on narrow panes.
@@ -141,13 +201,21 @@ pub fn draw_drawer(f: &mut Frame, area: Rect, app: &mut App) {
     }
 }
 
-fn gutter_blank(d: &DiffView) -> String {
-    " ".repeat(2 * d.gutter + 4)
+/// Columns before a line's `+`/`-` sign: both line numbers, or one space.
+fn gutter_width(app: &App, d: &DiffView) -> usize {
+    if app.config.line_numbers {
+        2 * d.gutter + 3
+    } else {
+        1
+    }
 }
 
-fn collapse_text(file: &FileChange) -> String {
+fn collapse_text(app: &App, file: &FileChange) -> String {
     let reason = file.collapse.map(|c| c.label()).unwrap_or("collapsed");
-    format!("⋯ collapsed ({reason}) · enter to expand")
+    format!(
+        "{} collapsed ({reason}) · enter to expand",
+        app.glyphs().collapsed
+    )
 }
 
 fn binary_text(d: &DiffView, row: &Row) -> String {
@@ -164,32 +232,45 @@ fn binary_text(d: &DiffView, row: &Row) -> String {
 
 fn render_row(app: &App, d: &DiffView, row: &Row, width: usize, tab: usize) -> Line<'static> {
     let file = &d.files[row.file];
+    let gl = app.glyphs();
+    // Notes and @@ lines start where code starts.
+    let indent = gutter_width(app, d) + 1;
     let note = |s: String| -> Line<'static> {
         Line::from(vec![
-            Span::raw(gutter_blank(d)),
+            Span::raw(" ".repeat(indent)),
             Span::styled(
-                text::truncate_end(&s, width.saturating_sub(2 * d.gutter + 4)),
+                text::truncate_end(&s, width.saturating_sub(indent)),
                 theme::dim(),
             ),
         ])
     };
     match row.kind {
         RowKind::Blank => Line::default(),
-        RowKind::Separator => Line::styled("─".repeat(width), theme::dim()),
+        RowKind::Separator => Line::styled(gl.rule.repeat(width), theme::dim()),
         RowKind::FileHeader => {
             let viewed = app.is_viewed(file);
             let folded = d.is_folded(row.file);
             let mut left = vec![
                 // ▾ open, ▸ folded (Enter toggles).
-                Span::styled(if folded { " ▸ " } else { " ▾ " }, theme::dim()),
-                Span::styled(if viewed { "✓ " } else { "  " }, theme::viewed()),
+                Span::styled(
+                    format!(" {} ", if folded { gl.folded } else { gl.open }),
+                    theme::dim(),
+                ),
+                Span::styled(
+                    if viewed {
+                        format!("{} ", gl.viewed)
+                    } else {
+                        "  ".into()
+                    },
+                    theme::viewed(),
+                ),
                 Span::styled(
                     format!("{} ", file.status.letter()),
                     theme::status(file.status),
                 ),
                 Span::styled(path_label(file), theme::bold()),
             ];
-            if let Some(sfx) = suffix(file, false) {
+            if let Some(sfx) = suffix(file, false, gl.collapsed) {
                 left.push(Span::styled(format!("  {sfx}"), theme::dim()));
             }
             let s = Stats::of(std::slice::from_ref(file));
@@ -226,9 +307,9 @@ fn render_row(app: &App, d: &DiffView, row: &Row, width: usize, tab: usize) -> L
                 .as_ref()
                 .map(|p| text::display(&p.hunks[h].header))
                 .unwrap_or_default();
-            let room = width.saturating_sub(2 * d.gutter + 4);
+            let room = width.saturating_sub(indent);
             Line::from(vec![
-                Span::raw(gutter_blank(d)),
+                Span::raw(" ".repeat(indent)),
                 Span::styled(text::truncate_end(&header, room), theme::hunk()),
             ])
         }
@@ -249,20 +330,30 @@ fn render_row(app: &App, d: &DiffView, row: &Row, width: usize, tab: usize) -> L
                 LineKind::NoNewline => (" ", theme::dim(), None, None),
             };
             let base = row_bg.map_or(Style::new(), |bg| Style::new().bg(bg));
-            let gutter = format!(" {} {} ", num(line.old), num(line.new));
+            let gutter = if app.config.line_numbers {
+                format!(" {} {} ", num(line.old), num(line.new))
+            } else {
+                " ".into()
+            };
             let mut spans = vec![
                 Span::styled(gutter, theme::dim()),
                 Span::styled(format!("{sign} "), sign_style.patch(base)),
             ];
-            let room = width.saturating_sub(2 * d.gutter + 5);
+            let room = width.saturating_sub(gutter_width(app, d) + 2);
             let segs = if line.kind == LineKind::NoNewline {
                 text::slice(&text::segments(&line.text, tab), 0, room)
             } else {
                 let runs = d
                     .highlight(row.file)
+                    .filter(|_| app.config.syntax)
                     .map(|hl| hl.line(h, l))
                     .unwrap_or_default();
-                let mut style_at = code_styler(&pal, base, runs, &line.emph, emph_bg);
+                let emph: &[(u32, u32)] = if app.config.word_highlights {
+                    &line.emph
+                } else {
+                    &[]
+                };
+                let mut style_at = code_styler(&pal, base, runs, emph, emph_bg);
                 let segs = text::segments_with(&line.text, tab, &mut style_at);
                 text::slice(&segs, d.hscroll, room)
             };
@@ -280,7 +371,7 @@ fn render_row(app: &App, d: &DiffView, row: &Row, width: usize, tab: usize) -> L
             }
             Line::from(spans)
         }
-        RowKind::Collapsed => note(collapse_text(file)),
+        RowKind::Collapsed => note(collapse_text(app, file)),
         RowKind::Binary => note(binary_text(d, row)),
         RowKind::Loading => note("loading…".into()),
         RowKind::TooLarge => note(format!(
@@ -292,6 +383,8 @@ fn render_row(app: &App, d: &DiffView, row: &Row, width: usize, tab: usize) -> L
                 "untracked nested repository"
             } else if matches!(file.status, Status::Renamed(_) | Status::Copied(_)) {
                 "renamed without changes"
+            } else if d.opts.ignore_ws && file.status == Status::Modified {
+                "only whitespace changes · W shows them"
             } else if file.status == Status::Unmerged {
                 "unmerged · resolve the conflict to see a diff"
             } else {

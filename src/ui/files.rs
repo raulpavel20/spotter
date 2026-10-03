@@ -24,7 +24,7 @@ pub fn path_label(f: &FileChange) -> String {
 
 /// Dim suffix after the path: file kind and, optionally, the collapsed
 /// marker.
-pub fn suffix(f: &FileChange, with_collapse: bool) -> Option<String> {
+pub fn suffix(f: &FileChange, with_collapse: bool, collapsed: &str) -> Option<String> {
     let mut parts = Vec::new();
     if f.new_mode == MODE_SYMLINK || f.old_mode == MODE_SYMLINK {
         parts.push("symlink".to_owned());
@@ -47,7 +47,7 @@ pub fn suffix(f: &FileChange, with_collapse: bool) -> Option<String> {
         parts.push(format!("mode {:o} → {:o}", f.old_mode, f.new_mode));
     }
     if with_collapse && f.collapse.is_some() {
-        parts.push("⋯ collapsed".to_owned());
+        parts.push(format!("{collapsed} collapsed"));
     }
     (!parts.is_empty()).then(|| parts.join(" · "))
 }
@@ -60,6 +60,7 @@ pub fn draw(f: &mut Frame, area: Rect, app: &mut App, wide: bool) {
         None => " Files ".to_owned(),
     };
     let block = Block::bordered()
+        .border_set(app.glyphs().border)
         .title(text::truncate_end(
             &title,
             area.width.saturating_sub(2) as usize,
@@ -122,6 +123,7 @@ pub fn file_lines(
     focused: bool,
 ) -> Vec<Line<'static>> {
     let compact = width < COMPACT;
+    let g = app.glyphs();
     let stats: Vec<Stats> = files
         .iter()
         .map(|f| Stats::of(std::slice::from_ref(f)))
@@ -136,8 +138,15 @@ pub fn file_lines(
             let selected = i == sel;
             let viewed = app.is_viewed(file);
             let mut left = vec![
-                Span::raw(if selected { "▸" } else { " " }),
-                Span::styled(if viewed { "✓ " } else { "  " }, theme::viewed()),
+                Span::raw(if selected { g.cursor } else { " " }),
+                Span::styled(
+                    if viewed {
+                        format!("{} ", g.viewed)
+                    } else {
+                        "  ".into()
+                    },
+                    theme::viewed(),
+                ),
                 Span::styled(
                     format!(
                         "{}{}",
@@ -149,7 +158,7 @@ pub fn file_lines(
             ];
             let mut right = Vec::new();
             if !compact {
-                if let Some(sfx) = suffix(file, true) {
+                if let Some(sfx) = suffix(file, true, g.collapsed) {
                     right.push(Span::styled(sfx, theme::dim()));
                     right.push(Span::raw("  "));
                 }

@@ -1,5 +1,6 @@
 ---
 source: tests/ui.rs
+assertion_line: 53
 expression: "h.render(160, 48)"
 ---
  feature/inventory · base main @0f6866e · 4 commits                                                                                        ● live · 4 to review
@@ -49,4 +50,4 @@ expression: "h.render(160, 48)"
 ├──────────────────────────────────────────────────────────────────────┤│                                                                                      │
 │ Σ Branch total                                       7 files  +75    ││                                                                                      │
 └──────────────────────────────────────────────────────────────────────┘└──────────────────────────────────────────────────────────────────────────────────────┘
- enter files · r viewed · u next to review · w/b jump · ? help
+ enter files · u next to review · r view all · w/b jump · , settings · ? help

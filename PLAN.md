@@ -144,6 +144,7 @@ The diff view shows the **whole target** as one continuous scroll with a header 
 ### Header and glyphs
 
 - **Header:** branch (or `detached @sha`), base ref, merge-base, commit count, watch status (`● live` / `◌ polling` / `✕ watch error`), and the number of commits not fully viewed.
+- **Footer:** key hints for what is on screen, such as `enter collapse` or `enter expand` for the current file, `space viewed` or `space unview`, and `m` only on merge commits. When the line is too narrow, the least important hints are dropped first.
 - **Banner line, when relevant:** trunk mode, rebase/merge/cherry-pick in progress, base looks wrong, git too old for remerge-diff.
 - **Timeline glyphs:** `●` nothing viewed, `◐` partly viewed, `✓` all files viewed, `▸` cursor. Merge commits get a dim `(merge)` tag. ◌ and Σ are fixed type glyphs, and their files carry their own ✓ marks.
 - **File status letters:** `M A D R C T U` as in git, plus `?` for untracked. Collapsed files show a dim `⋯ collapsed` suffix.
@@ -164,6 +165,7 @@ The diff view shows the **whole target** as one continuous scroll with a header 
 | `n` / `p` | Next (newer) / previous (older) commit |
 | `i` | Σ: toggle including uncommitted changes |
 | `Ctrl-L` | Force refresh and redraw |
+| `,` | Settings screen |
 | `?` | Help overlay |
 
 **Timeline and file panels**
@@ -188,9 +190,10 @@ The diff view shows the **whole target** as one continuous scroll with a header 
 | `Space` | Mark the current file viewed (it collapses) and jump to the next unviewed file, continuing into the next commit. On a viewed file: unmark it (it expands) |
 | `Enter` | Collapse / expand the current file |
 | `m` | Merge commit: toggle remerge-diff / first-parent |
+| `W` | Hide whitespace-only changes for this session (`git diff -w`) |
 | `e` | Open the editor at the current file's first changed line on screen |
 | `f` | Toggle the file explorer (opening it focuses it) |
-| `Tab` | Switch focus between the explorer and the diff |
+| `Tab`, or `←` / `→` | Switch focus between the explorer and the diff (`←` scrolls left first if the diff is scrolled right) |
 
 **File explorer** (while it has focus)
 
@@ -304,9 +307,10 @@ The diff view shows the **whole target** as one continuous scroll with a header 
   - Lines over 2,000 bytes aren't highlighted.
 - **Colors:**
   - Truecolor when `COLORTERM` says so; otherwise 256 colors, with hand-picked tints.
-  - Dark or light from `spotter.theme` (`auto` reads `COLORFGBG` and defaults to dark). The terminal is never queried.
-  - Syntax theme: `spotter.syntaxTheme`, default Monokai Extended on dark and GitHub on light. `ansi` follows the terminal palette.
-  - `spotter.syntax=false` turns highlighting off; tints and changed words stay.
+  - Dark or light from `theme.background` (`auto` reads `COLORFGBG` and defaults to dark). The terminal is never queried.
+  - Syntax theme: `theme.syntax_theme`, default Monokai Extended on dark and GitHub on light. `ansi` follows the terminal palette.
+  - `diff.syntax = false` turns highlighting off; tints and changed words stay.
+  - All of these are in the settings screen (§8.1).
 
 ### 6.5 History rewrites and repository states
 
@@ -396,22 +400,61 @@ src/
   worddiff.rs    changed-word emphasis within modified lines
   highlight.rs   syntax highlighting (syntect + two-face), its thread and cache
   ui/explorer.rs file explorer inside the diff view; ui/palette.rs diff colors
-  config.rs      CLI flags + `git config --get-regexp '^spotter\.'`
+  config.rs      settings table, layering (defaults → file → git config → CLI)
+  config_file.rs config.toml read/write (toml_edit, keeps comments)
 ```
 
 - **Event loop.** The main thread owns the terminal and draws from `App` state. It receives `Msg`s from one channel fed by the input, watcher and worker threads.
 - **Caching.** Commit file lists and patches never change, so they are cached by SHA (LRU by size). Only ◌ and Σ are volatile.
-- **Configuration.** Settings live in git config (`spotter.base`, `spotter.editor`, `spotter.editorGui`, `spotter.collapse`, `spotter.tabWidth`, `spotter.trunkDepth`, `spotter.syntax`, `spotter.theme`, `spotter.syntaxTheme`), per repo or global. There is no new config file.
+- **Configuration.** See §8.1.
 
 ```
 spotter [PATH]                # defaults to the current directory
   --base <ref>                # override base resolution
   --no-watch                  # poll instead of watching
+  --config <FILE>             # settings file (default ~/.config/spotter/config.toml)
 ```
 
 - **Packaging.** The crate is published as `spotter-tui`, because plain `spotter` is taken on crates.io. The binary is `spotter`. An optional `git-spotter` alias makes `git spotter` work too.
 
 ---
+
+### 8.1 Settings
+
+**Where settings live:**
+- **`~/.config/spotter/config.toml`** (or `$XDG_CONFIG_HOME/spotter/config.toml`, or `--config`) holds them.
+  - The first save writes a template that lists every setting, commented out at its default with a description.
+  - Spotter edits the file with `toml_edit`, so hand-written comments survive.
+  - Edits made outside Spotter are picked up live.
+- **The settings panel (`,`)** is a centered modal over the current screen. It lists every setting by section, with faint leader dots from each label to its value, and the selected setting's description underneath.
+  - `←`/`→` change a value with live preview, and the change is saved at once. `d` resets a setting by removing its key; `e` opens the file in the editor.
+  - Text settings (the editor command and collapse patterns) are edited in the file.
+- **Precedence:** defaults, then the file, then git config `spotter.*` (global, then repo), then CLI flags.
+  - Git config acts as per-repo overrides. The screen marks a setting as `git` when git config overrides it.
+  - Collapse patterns from git config add to the file's patterns rather than replacing them.
+  - `spotter.base` exists only in git config and `--base`.
+
+| Setting | Git key | Default |
+|---|---|---|
+| `review.explorer_on_open`: open diffs with the explorer (wide panes only) | `spotter.explorerOnOpen` | true |
+| `review.collapse_viewed`: viewed files collapse | `spotter.collapseViewed` | true |
+| `review.space_continues`: Space moves into the next commit | `spotter.spaceContinues` | true |
+| `review.total_includes_uncommitted`: Σ starts with uncommitted work | `spotter.totalIncludesUncommitted` | true |
+| `diff.context_lines` (0–20) | `spotter.contextLines` | 3 |
+| `diff.ignore_whitespace` | `spotter.ignoreWhitespace` | false |
+| `diff.word_highlights` | `spotter.wordHighlights` | true |
+| `diff.line_numbers` | `spotter.lineNumbers` | true |
+| `diff.syntax` | `spotter.syntax` | true |
+| `diff.tab_width` (1–16) | `spotter.tabWidth` | 4 |
+| `diff.collapse_lines`: files above this many changed lines start collapsed | `spotter.collapseLines` | 1500 |
+| `diff.collapse`: extra collapse patterns | `spotter.collapse` (multi-valued) | [] |
+| `theme.background` (auto/dark/light) | `spotter.theme` | auto |
+| `theme.syntax_theme` (`default` or a bundled theme; `ansi` follows the terminal) | `spotter.syntaxTheme` | default |
+| `theme.ascii`: ASCII glyphs and borders | `spotter.ascii` | false |
+| `layout.wide_breakpoint` | `spotter.wideBreakpoint` | 100 |
+| `layout.timeline_width`, `layout.explorer_width` (%) | `spotter.timelineWidth`, `spotter.explorerWidth` | 45, 30 |
+| `editor.command`, `editor.gui` (auto/true/false) | `spotter.editor`, `spotter.editorGui` | —, auto |
+| `repo.trunk_depth` | `spotter.trunkDepth` | 20 |
 
 ## 9. Milestones
 

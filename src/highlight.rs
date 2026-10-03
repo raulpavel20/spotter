@@ -72,6 +72,17 @@ pub fn theme_name(configured: Option<&str>, background: Background) -> EmbeddedT
     }
 }
 
+/// Choices for the settings screen: `default`, then every bundled theme.
+pub fn theme_choices() -> Vec<&'static str> {
+    std::iter::once("default")
+        .chain(
+            EmbeddedLazyThemeSet::theme_names()
+                .iter()
+                .map(|t| t.as_name()),
+        )
+        .collect()
+}
+
 pub struct Highlighter {
     syntaxes: SyntaxSet,
     theme: Theme,
@@ -175,8 +186,16 @@ impl Highlighter {
     }
 }
 
-/// A file to highlight. `key` is the file's content key
-/// (`FileChange::mark_key`), which doubles as the cache key.
+/// Messages to the highlighting thread.
+#[derive(Debug, Clone)]
+pub enum HlMsg {
+    Highlight(HlRequest),
+    /// Switch themes; cached colors are dropped.
+    SetTheme(EmbeddedThemeName),
+}
+
+/// A file to highlight. `key` identifies its content and diff options,
+/// and doubles as the cache key.
 #[derive(Debug, Clone)]
 pub struct HlRequest {
     pub seq: u64,
@@ -219,7 +238,7 @@ impl Cache {
     }
 }
 
-fn run(theme: EmbeddedThemeName, rx: Receiver<HlRequest>, out: Sender<Msg>) {
+fn run(mut theme: EmbeddedThemeName, rx: Receiver<HlMsg>, out: Sender<Msg>) {
     let mut hl: Option<Highlighter> = None;
     let mut cache = Cache {
         map: HashMap::new(),
@@ -227,13 +246,27 @@ fn run(theme: EmbeddedThemeName, rx: Receiver<HlRequest>, out: Sender<Msg>) {
     };
     let mut queue: VecDeque<HlRequest> = VecDeque::new();
     loop {
+        let mut incoming = Vec::new();
         if queue.is_empty() {
             match rx.recv() {
-                Ok(r) => queue.push_back(r),
+                Ok(m) => incoming.push(m),
                 Err(_) => return,
             }
         }
-        queue.extend(rx.try_iter());
+        incoming.extend(rx.try_iter());
+        for m in incoming {
+            match m {
+                HlMsg::Highlight(r) => queue.push_back(r),
+                HlMsg::SetTheme(t) => {
+                    if t != theme {
+                        theme = t;
+                        hl = None;
+                        cache.map.clear();
+                        cache.order.clear();
+                    }
+                }
+            }
+        }
         // Only the newest diff matters.
         let newest = queue.iter().map(|r| r.seq).max().unwrap_or(0);
         queue.retain(|r| r.seq == newest);
@@ -261,7 +294,7 @@ fn run(theme: EmbeddedThemeName, rx: Receiver<HlRequest>, out: Sender<Msg>) {
 }
 
 /// Starts the highlighting thread.
-pub fn spawn(theme: EmbeddedThemeName, out: Sender<Msg>) -> Sender<HlRequest> {
+pub fn spawn(theme: EmbeddedThemeName, out: Sender<Msg>) -> Sender<HlMsg> {
     let (tx, rx) = mpsc::channel();
     thread::Builder::new()
         .name("spotter-syntax".into())

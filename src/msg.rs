@@ -5,7 +5,8 @@ use std::sync::Arc;
 use bstr::BString;
 use crossterm::event::KeyEvent;
 
-use crate::git::diff::DiffSpec;
+use crate::config::{Config, Loaded, Value};
+use crate::git::diff::{DiffOpts, DiffSpec};
 use crate::highlight::FileHighlight;
 use crate::model::{FileChange, FilePatch};
 use crate::refresh::{LoadedPatch, RefreshOpts, Snapshot};
@@ -51,6 +52,8 @@ pub enum Msg {
         key: String,
         hl: Arc<FileHighlight>,
     },
+    /// Settings re-read after editing the file.
+    ConfigReloaded(Box<Loaded>),
     /// Every 250 ms.
     Tick,
 }
@@ -77,13 +80,25 @@ pub enum Effect {
         seq: u64,
         spec: DiffSpec,
         files: Vec<FileChange>,
+        opts: DiffOpts,
     },
     LoadFile {
         seq: u64,
         index: usize,
         spec: DiffSpec,
         file: FileChange,
+        opts: DiffOpts,
     },
+    /// Write one setting to the config file (`None` removes it).
+    SaveSetting {
+        key: &'static str,
+        value: Option<Value>,
+    },
+    /// Settings the worker uses (collapse rules, trunk depth) changed.
+    SetWorkerConfig(Box<Config>),
+    SetSyntaxTheme(two_face::theme::EmbeddedThemeName),
+    /// Open the config file in the editor, then reload it.
+    EditConfig,
     /// Syntax-highlight one loaded file of the open diff.
     Highlight {
         seq: u64,

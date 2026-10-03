@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use bstr::{BString, ByteSlice};
 
-use crate::git::diff::DiffSpec;
+use crate::git::diff::{DiffOpts, DiffSpec};
 use crate::highlight::FileHighlight;
 use crate::model::{FileChange, FilePatch, LineKind, Status, TargetId};
 use crate::refresh::MAX_UNTRACKED;
@@ -88,6 +88,12 @@ pub struct DiffView {
     pub error: Option<String>,
     /// Content key of each file (`FileChange::mark_key`).
     pub keys: Vec<String>,
+    /// Highlight cache keys: content key plus diff options.
+    pub hl_keys: Vec<String>,
+    /// How patches were produced (context lines, whitespace).
+    pub opts: DiffOpts,
+    /// Viewed files start folded (`review.collapse_viewed`).
+    pub collapse_viewed: bool,
     /// Syntax colors by content key; they survive reloads of unchanged
     /// files.
     pub highlights: HashMap<String, Arc<FileHighlight>>,
@@ -100,7 +106,7 @@ pub struct DiffView {
 pub type Anchor = Option<(Vec<u8>, usize)>;
 
 impl DiffView {
-    pub fn new(target: TargetId, spec: DiffSpec, files: Vec<FileChange>) -> Self {
+    pub fn new(target: TargetId, spec: DiffSpec, files: Vec<FileChange>, opts: DiffOpts) -> Self {
         let n = files.len();
         let mut v = DiffView {
             target,
@@ -120,18 +126,41 @@ impl DiffView {
             gutter: 4,
             error: None,
             keys: Vec::new(),
+            hl_keys: Vec::new(),
+            opts,
+            collapse_viewed: true,
             highlights: HashMap::new(),
             hl_requested: HashSet::new(),
             explorer_offset: 0,
         };
-        v.keys = v.files.iter().map(FileChange::mark_key).collect();
+        v.set_keys();
         v.rebuild();
         v
     }
 
+    fn set_keys(&mut self) {
+        self.keys = self.files.iter().map(FileChange::mark_key).collect();
+        let sfx = self.opts.suffix();
+        self.hl_keys = self.keys.iter().map(|k| format!("{k}{sfx}")).collect();
+    }
+
+    /// New diff options; the caller reloads the patch.
+    pub fn set_opts(&mut self, opts: DiffOpts) {
+        self.opts = opts;
+        self.set_keys();
+        self.hl_requested.clear();
+    }
+
+    pub fn set_collapse_viewed(&mut self, on: bool) {
+        if self.collapse_viewed != on {
+            self.collapse_viewed = on;
+            self.rebuild_anchored();
+        }
+    }
+
     /// Syntax colors for a file, if they have arrived.
     pub fn highlight(&self, file: usize) -> Option<&FileHighlight> {
-        self.keys
+        self.hl_keys
             .get(file)
             .and_then(|k| self.highlights.get(k))
             .map(Arc::as_ref)
@@ -147,7 +176,9 @@ impl DiffView {
         self.fold
             .get(&self.files[i].path)
             .copied()
-            .unwrap_or_else(|| self.files[i].collapse.is_some() || self.is_viewed(i))
+            .unwrap_or_else(|| {
+                self.files[i].collapse.is_some() || (self.collapse_viewed && self.is_viewed(i))
+            })
     }
 
     /// Recomputes rows from files, patches and fold state.
@@ -280,8 +311,8 @@ impl DiffView {
             .iter()
             .map(|f| viewed.get(&f.path).copied().unwrap_or(false))
             .collect();
-        self.keys = self.files.iter().map(FileChange::mark_key).collect();
-        let keys: HashSet<&String> = self.keys.iter().collect();
+        self.set_keys();
+        let keys: HashSet<&String> = self.hl_keys.iter().collect();
         self.highlights.retain(|k, _| keys.contains(k));
         // A reload supersedes queued highlight requests (the highlighter
         // drops older ones), so ask again; results are cached by content.
@@ -561,6 +592,7 @@ diff --git a/b b/b
             TargetId::Uncommitted,
             DiffSpec::Worktree("HEAD".into()),
             vec![file("a"), file("b")],
+            DiffOpts::default(),
         );
         v.viewport = 5;
         v.set_patches(parsed.into_iter().map(Some).collect(), false);
@@ -664,6 +696,10 @@ diff --git a/b b/b
         assert!(!v.is_folded(1));
         v.set_viewed(vec![false, false]);
         assert!(!v.is_folded(1));
+        // With collapse_viewed off, viewed files stay open.
+        v.set_collapse_viewed(false);
+        v.set_viewed(vec![true, true]);
+        assert!(!v.is_folded(0) && !v.is_folded(1));
     }
 
     #[test]

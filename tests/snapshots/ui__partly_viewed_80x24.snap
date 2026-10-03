@@ -1,5 +1,6 @@
 ---
 source: tests/ui.rs
+assertion_line: 82
 expression: "h.render(80, 24)"
 ---
  feature/inventory · main                                  ● live · 4 to review
@@ -25,4 +26,4 @@ expression: "h.render(80, 24)"
 │                                                                              │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
- enter files · u next · ? help
+ enter files · u next to review · r view all · w/b jump · , settings · ? help

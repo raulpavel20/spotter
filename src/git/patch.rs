@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use bstr::{BString, ByteSlice};
 
 use super::cmd::{Git, GitError};
-use super::diff::DiffSpec;
+use super::diff::{DiffOpts, DiffSpec};
 use crate::model::{FileChange, FilePatch, Hunk, Line, LineKind};
 
 /// Quotes a path the way git does in `diff --git` headers with
@@ -204,8 +204,15 @@ pub fn load(
     git: &Git,
     spec: &DiffSpec,
     paths: Option<&[&[u8]]>,
+    opts: DiffOpts,
 ) -> Result<Vec<FilePatch>, GitError> {
-    let mut cmd = spec.base_cmd(git).arg("-p");
+    let mut cmd = spec
+        .base_cmd(git)
+        .arg("-p")
+        .arg(format!("-U{}", opts.context));
+    if opts.ignore_ws {
+        cmd = cmd.arg("--ignore-all-space");
+    }
     if let Some(paths) = paths {
         cmd = cmd.arg("--");
         for p in paths {

@@ -1,5 +1,6 @@
 ---
 source: tests/diffview.rs
+assertion_line: 253
 expression: "h.render(100, 30)"
 ---
  014ef17 three files · beta.rs (2/3)                                                   ◐ 1/3 viewed
@@ -31,4 +32,4 @@ expression: "h.render(100, 30)"
       23 + // beta.rs line 22
       24 + // beta.rs line 23
 ────────────────────────────────────────────────────────────────────────────────────────────────────
- ]/[ hunk · }/{ file · f files · space viewed · n/p commit · e edit · esc back
+ ]/[ hunk · }/{ file · enter collapse · space viewed · f files · e edit · n/p commit · esc back
