@@ -4,7 +4,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Block, Paragraph};
 
 use super::text::{self, left_right, width};
 use super::theme;
@@ -21,8 +21,42 @@ fn plural(n: usize, word: &str) -> String {
     format!("{n} {word}{}", if n == 1 { "" } else { "s" })
 }
 
+/// The box at the top of a screen. With tabs, its top border opens under
+/// the active one: `gap` is that tab's left and right border columns.
+/// Returns the inside.
+pub fn frame(f: &mut Frame, area: Rect, app: &App, gap: Option<(u16, u16)>) -> Rect {
+    let border = app.glyphs().border;
+    let block = Block::bordered()
+        .border_set(border)
+        .border_style(theme::dim());
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    if let Some((l, r)) = gap
+        && area.width > 1
+        && area.height > 0
+    {
+        let (first, last) = (area.x, area.right() - 1);
+        let (l, r) = (l.clamp(first, last), r.clamp(first, last));
+        let buf = f.buffer_mut();
+        let y = area.y;
+        for x in l..=r {
+            let symbol = match x {
+                // The tab's sides run down into the box, or turn along
+                // its top edge.
+                x if x == l && x == first => border.vertical_left,
+                x if x == l => border.bottom_right,
+                x if x == r && x == last => border.vertical_right,
+                x if x == r => border.bottom_left,
+                _ => " ",
+            };
+            buf[(x, y)].set_symbol(symbol);
+        }
+    }
+    inner
+}
+
 pub fn draw(f: &mut Frame, area: Rect, app: &App) {
-    let wide = area.width >= app.config.wide_breakpoint;
+    let wide = !app.narrow();
     let gl = app.glyphs();
     let mut left: Vec<Span<'static>> = vec![Span::raw(" ")];
     match &app.snap {

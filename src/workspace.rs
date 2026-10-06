@@ -14,6 +14,7 @@ use two_face::theme::EmbeddedThemeName;
 use crate::app::{App, TOAST_TICKS};
 use crate::git::base::BaseMode;
 use crate::msg::{Effect, Msg, RefreshKind, TabId, WatchStatus};
+use crate::ui::tabs;
 
 pub struct Tab {
     pub id: TabId,
@@ -144,7 +145,8 @@ impl Workspace {
                 None => Vec::new(),
             },
             Msg::Resize(w, h) => {
-                let h = h.saturating_sub(u16::from(self.show_bar()));
+                let bar = if self.show_bar() { tabs::HEIGHT } else { 0 };
+                let h = h.saturating_sub(bar);
                 (0..self.tabs.len())
                     .flat_map(|i| self.deliver(i, Msg::Resize(w, h)))
                     .collect()

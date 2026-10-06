@@ -80,15 +80,29 @@ fn diff_hints(app: &App, d: &DiffView) -> Vec<Hint> {
     h
 }
 
-pub fn draw(f: &mut Frame, area: Rect, app: &mut App) {
-    let [head, rule1, body, rule2, foot] = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Length(1),
+/// Rows above the diff: its header, framed.
+pub const TOP: u16 = 3;
+/// Rows that aren't the diff: the header box, the rule and the footer.
+pub const CHROME: u16 = TOP + 2;
+
+/// Where the diff body goes in a screen of `area`.
+pub fn body_area(area: Rect) -> Rect {
+    Rect {
+        y: area.y + TOP,
+        height: area.height.saturating_sub(CHROME),
+        ..area
+    }
+}
+
+pub fn draw(f: &mut Frame, area: Rect, app: &mut App, gap: Option<(u16, u16)>) {
+    let [top, body, rule2, foot] = Layout::vertical([
+        Constraint::Length(TOP),
         Constraint::Min(0),
         Constraint::Length(1),
         Constraint::Length(1),
     ])
     .areas(area);
+    let head = super::header::frame(f, top, app, gap);
     let tab = app.config.tab_width;
     let gl = app.glyphs();
     let split = super::explorer::split(app, body);
@@ -97,13 +111,12 @@ pub fn draw(f: &mut Frame, area: Rect, app: &mut App) {
         d.viewport = body.height.max(1) as usize;
         d.clamp_scroll();
     }
-    // The side panel's box spans the rule rows, so it lines up with the
-    // lines framing the diff.
+    // The side panel's box ends on the rule row, so it lines up with the
+    // line under the diff.
     let side = split.explorer.filter(|_| !split.drawer);
     if let Some(ex) = side {
         let ex = Rect {
-            y: rule1.y,
-            height: body.height + 2,
+            height: body.height + 1,
             ..ex
         };
         super::explorer::draw(f, ex, app, false);
@@ -136,31 +149,23 @@ pub fn draw(f: &mut Frame, area: Rect, app: &mut App) {
         head,
     );
 
-    // The rules above and below the diff frame it. With the explorer open
-    // they act like its border: bright while the diff has focus, dim while
-    // the explorer has it.
-    let (rule1, rule2) = match side {
-        Some(_) => (
-            Rect {
-                x: body.x,
-                width: body.width,
-                ..rule1
-            },
-            Rect {
-                x: body.x,
-                width: body.width,
-                ..rule2
-            },
-        ),
-        None => (rule1, rule2),
+    // The rule below the diff. With the explorer open it acts like the
+    // diff's border: bright while the diff has focus, dim while the
+    // explorer has it.
+    let rule2 = match side {
+        Some(_) => Rect {
+            x: body.x,
+            width: body.width,
+            ..rule2
+        },
+        None => rule2,
     };
     let frame = if app.explorer_open {
         theme::border(app.diff_focus == crate::app::DiffFocus::Diff)
     } else {
         theme::dim()
     };
-    let rule = gl.rule.repeat(rule1.width as usize);
-    f.render_widget(Paragraph::new(Line::styled(rule.clone(), frame)), rule1);
+    let rule = gl.rule.repeat(rule2.width as usize);
     match &d.error {
         Some(e) => f.render_widget(
             Paragraph::new(Line::styled(
@@ -195,11 +200,7 @@ pub fn draw(f: &mut Frame, area: Rect, app: &mut App) {
 
 /// The explorer drawer, drawn over the diff on narrow panes.
 pub fn draw_drawer(f: &mut Frame, area: Rect, app: &mut App) {
-    let body = Rect {
-        y: area.y + 2,
-        height: area.height.saturating_sub(4),
-        ..area
-    };
+    let body = body_area(area);
     let split = super::explorer::split(app, body);
     if let (Some(ex), true) = (split.explorer, split.drawer) {
         super::explorer::draw(f, ex, app, true);

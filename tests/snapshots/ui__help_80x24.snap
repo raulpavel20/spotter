@@ -2,21 +2,21 @@
 source: tests/ui.rs
 expression: "h.render(80, 24)"
 ---
- feature/i┌ Keys · any key closes ───────────────────────────────────┐to review
-┌ Timeline│ Everywhere                                               │─────────┐
-│ ◌ Uncomm│   q / esc  back · q on the main screen quits             │   +4    │
-│ ● 8a9051│   tab      switch panel                                  │   +2 -1 │
-│▸◐ aa3185│   w / b    jump to uncommitted / branch total            │   +7    │
-│ ● 3ddc35│   u        oldest commit with unviewed files             │  +60    │
-│ ● 289a7a│   n / p    newer / older commit                          │   +3    │
-├─────────│   i        branch total: toggle uncommitted changes      │─────────┤
-│ Σ Branch│   m        merge: remerge-diff / first-parent            │  +75    │
-└─────────│   c · P    commit · push (turn on git actions in settings│─────────┘
-┌ Files · │   ctrl-l   refresh and redraw                            │─────────┐
-│▸✓ A  ass│   , · ?    settings · this help                          │     +1  │
-│   A  src│                                                          │     +6  │
-│         │ Timeline and files                                       │         │
-│         │   j / k    move                                          │         │
+┌─────────┌ Keys · any key closes ───────────────────────────────────┐─────────┐
+│ feature/│ Everywhere                                               │o review │
+└─────────│   q / esc  back · q on the main screen quits             │─────────┘
+┌ Timeline│   tab      switch panel                                  │─────────┐
+│ ◌ Uncomm│   w / b    jump to uncommitted / branch total            │   +4    │
+│ ● 8a9051│   u        oldest commit with unviewed files             │   +2 -1 │
+│▸◐ aa3185│   n / p    newer / older commit                          │   +7    │
+│ ● 3ddc35│   i        branch total: toggle uncommitted changes      │  +60    │
+│ ● 289a7a│   m        merge: remerge-diff / first-parent            │   +3    │
+├─────────│   c · P    commit · push (turn on git actions in settings│─────────┤
+│ Σ Branch│   ctrl-l   refresh and redraw                            │  +75    │
+└─────────│   , · ?    settings · this help                          │─────────┘
+┌ Files · │                                                          │─────────┐
+│▸✓ A  ass│ Timeline and files                                       │     +1  │
+│   A  src│   j / k    move                                          │     +6  │
 │         │   g / G    top / bottom                                  │         │
 │         │   enter    timeline: files · files: open diff            │         │
 │         │   space    files: toggle viewed                          │         │

@@ -1,9 +1,10 @@
 ---
 source: tests/ui.rs
-assertion_line: 82
 expression: "h.render(80, 24)"
 ---
- feature/inventory · main                                  ● live · 4 to review
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ feature/inventory · main                                ● live · 4 to review │
+└──────────────────────────────────────────────────────────────────────────────┘
 ┌ Timeline ────────────────────────────────────────────────────────────────────┐
 │ ◌ Uncommitted                                                3 files   +4    │
 │ ● 8a90517 Fix item drag                                                +2 -1 │
@@ -16,8 +17,6 @@ expression: "h.render(80, 24)"
 ┌ Files · aa31857 ─────────────────────────────────────────────────────────────┐
 │▸✓ A  assets/theme.tres                                                   +1  │
 │   A  src/tooltip.gd                                                      +6  │
-│                                                                              │
-│                                                                              │
 │                                                                              │
 │                                                                              │
 │                                                                              │

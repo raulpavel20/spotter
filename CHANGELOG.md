@@ -15,6 +15,7 @@ All notable changes are listed here. The format follows
 - Pasted text arrives as one paste (bracketed paste) instead of as key presses.
 - Started outside a repository, Spotter looks for repositories inside the folder before giving up.
 - The file watcher starts in the background, so the first screen appears sooner in big repositories.
+- The branch line and its notes sit in a box above the panels, and the diff view's header in one above the diff. With several repositories, the active tab opens into that box.
 
 ### Fixed
 - Changing `diff.ignore_whitespace` in the settings now takes effect after `W` was pressed.

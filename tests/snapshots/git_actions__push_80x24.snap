@@ -2,19 +2,19 @@
 source: tests/git_actions.rs
 expression: screen
 ---
- main · origin/main                                        ● live · 2 to review
- trunk mode · unpushed commits (origin/main..HEAD)
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ main · origin/main                                      ● live · 2 to review │
+│ trunk mode · unpushed commits (origin/main..HEAD)                            │
+└──────────────────────────────────────────────────────────────────────────────┘
 ┌ Timeline ────────────────────────────────────────────────────────────────────┐
 │▸◌ Uncommitted                                                          clean │
 │ ● cec7875 third                                                        +1 -1 │
 │ ● 61d3924 second                                                       +1 -1 │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ Σ Branch total                                                 1 file  +1 -1 │
-└──────────────────────────────────────────────────────────────────────────────┘
-┌ Files · Uncommitted ─────────────────────────────────────────────────────────┐
-│ wor┌ Push ──────────────────────────────────────────────────────────────┐    │
-│    │ Push 2 commits from main                                           │    │
-│    │ to origin/main?                                                    │    │
+└────┌ Push ──────────────────────────────────────────────────────────────┐────┘
+┌ Fil│ Push 2 commits from main                                           │────┐
+│ wor│ to origin/main?                                                    │    │
 │    └───────────────────── enter push · esc cancel ──────────────────────┘    │
 │                                                                              │
 │                                                                              │

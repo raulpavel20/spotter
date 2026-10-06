@@ -224,19 +224,21 @@ fn pager_scrolling_tracks_the_file_at_the_top() {
     assert_eq!(d.scroll, 3);
     assert_eq!(d.sticky(), Some(0));
     let screen = h.render(100, 20);
-    let first_body_line = screen.lines().nth(2).unwrap();
+    // Below the header's box.
+    let first_body_line = screen.lines().nth(3).unwrap();
     assert!(
         first_body_line.contains("alpha.rs"),
         "pinned header: {screen}"
     );
     // Scrolling into the next file switches the current file.
-    h.keys("ctrl-d ctrl-d ctrl-d ctrl-d");
+    h.keys("ctrl-d ctrl-d ctrl-d ctrl-d ctrl-d");
     let d = h.app.diff.as_ref().unwrap();
     assert_eq!(d.current_file(), Some(1));
+    // The header, inside its box.
     assert!(
         h.render(100, 20)
             .lines()
-            .next()
+            .nth(1)
             .unwrap()
             .contains("beta.rs (2/3)")
     );
@@ -325,12 +327,10 @@ fn diff_frame_shows_focus_when_the_explorer_is_open() {
     h.keys("j enter enter");
     let dimmed = |h: &mut Harness| {
         let buf = h.render_buffer(160, 40);
-        // The rules above and below the diff, at the right edge.
-        let top = buf[(159, 1)].modifier.contains(Modifier::DIM);
-        let bottom = buf[(159, 38)].modifier.contains(Modifier::DIM);
-        assert_eq!(top, bottom);
-        // The explorer's border at its top-left corner.
-        (top, buf[(0, 1)].modifier.contains(Modifier::DIM))
+        // The rule below the diff, at the right edge.
+        let rule = buf[(159, 38)].modifier.contains(Modifier::DIM);
+        // The explorer's border at its top-left corner, under the header.
+        (rule, buf[(0, 3)].modifier.contains(Modifier::DIM))
     };
     assert_eq!(h.app.diff_focus, DiffFocus::Diff);
     assert_eq!(

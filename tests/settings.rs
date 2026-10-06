@@ -350,8 +350,9 @@ fn layout_breakpoint_setting() {
     let r = one_change();
     let mut h = Harness::configured(&r, |c| c.wide_breakpoint = 70);
     let screen = h.render(80, 24);
-    // Side by side: the timeline and files share the first panel row.
-    let first = screen.lines().nth(1).unwrap();
+    // Side by side: the timeline and files share the first panel row,
+    // under the header's box.
+    let first = screen.lines().nth(3).unwrap();
     assert!(
         first.contains("Timeline") && first.contains("Files"),
         "{screen}"

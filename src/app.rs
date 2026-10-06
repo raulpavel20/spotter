@@ -848,7 +848,7 @@ impl App {
     /// the diff (as `ui::diff::draw` lays it out).
     fn diff_body_width(&self) -> usize {
         let (w, h) = self.size;
-        let body = Rect::new(0, 2, w, h.saturating_sub(4));
+        let body = crate::ui::diff::body_area(Rect::new(0, 0, w, h));
         crate::ui::explorer::split(self, body).diff.width as usize
     }
 
@@ -1511,5 +1511,5 @@ impl App {
 
 /// Diff content height: the screen minus header, two rules and footer.
 pub fn diff_viewport(height: u16) -> usize {
-    height.saturating_sub(4).max(1) as usize
+    height.saturating_sub(crate::ui::diff::CHROME).max(1) as usize
 }

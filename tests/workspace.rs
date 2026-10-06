@@ -54,8 +54,8 @@ fn opens_every_repository_in_a_folder() {
     assert_eq!(s(&h, 2).to_review, 1);
     insta::assert_snapshot!("tabs_80x24", h.render(80, 24));
     // The bar takes a row from the repository's screen.
-    assert_eq!(h.app(0).size, (80, 23));
-    assert_eq!(h.app(2).size, (80, 23));
+    assert_eq!(h.app(0).size, (80, 22));
+    assert_eq!(h.app(2).size, (80, 22));
 }
 
 #[test]
@@ -84,7 +84,10 @@ fn several_paths_open_as_tabs() {
     let mut h = WsHarness::open(&api, &[&web.path, &api.path, &api.path.join("src")]);
     assert_eq!(names(&h), ["web", "api"]);
     assert_eq!(h.ws.title, None);
-    assert!(h.render(80, 24).starts_with(" 1 web 1 │ 2 api"));
+    let screen = h.render(80, 24);
+    // The tabs' row; the active one is boxed.
+    let tabs = screen.lines().nth(1).unwrap();
+    assert!(tabs.starts_with("│ 1 web 1 │ 2 api"), "{screen}");
 }
 
 #[test]
@@ -144,10 +147,11 @@ fn changes_in_other_tabs_only_mark_them() {
     // No toast about another repository's files.
     assert_eq!(h.app(0).toast, None);
     let bar = h.render_buffer(80, 24);
-    let top = common::buffer_text(&bar);
-    let web_x = top[..top.find("web").unwrap()].chars().count() as u16;
+    let text = common::buffer_text(&bar);
+    let tabs = text.lines().nth(1).unwrap();
+    let web_x = tabs[..tabs.find("web").unwrap()].chars().count() as u16;
     assert!(
-        bar[(web_x, 0)]
+        bar[(web_x, 1)]
             .modifier
             .contains(ratatui::style::Modifier::BOLD)
     );
@@ -192,7 +196,7 @@ fn commit_results_reach_you_in_another_tab() {
     );
     assert!(h.ws.summary(2).attention);
     let bar = h.render(80, 24);
-    assert!(bar.lines().next().unwrap().contains("web ◌ 1 !"), "{bar}");
+    assert!(bar.lines().nth(1).unwrap().contains("web ◌ 1 !"), "{bar}");
 }
 
 #[test]
@@ -299,8 +303,8 @@ fn many_tabs_scroll() {
         t.app.config.ascii = true;
     }
     let bar = h.render(60, 16);
-    assert!(bar.lines().next().unwrap().is_ascii(), "{bar}");
-    assert!(bar.lines().next().unwrap().starts_with("< 3 "), "{bar}");
+    assert!(bar.lines().take(3).all(|l| l.is_ascii()), "{bar}");
+    assert!(bar.lines().nth(1).unwrap().starts_with("< 3 "), "{bar}");
 }
 
 #[test]

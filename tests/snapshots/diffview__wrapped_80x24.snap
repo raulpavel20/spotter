@@ -2,8 +2,9 @@
 source: tests/diffview.rs
 expression: wrapped
 ---
- 7e2ad1b long sum · calc.rs (1/1)                                  ● 0/1 viewed
-────────────────────────────────────────────────────────────────────────────────
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ 7e2ad1b long sum · calc.rs (1/1)                                ● 0/1 viewed │
+└──────────────────────────────────────────────────────────────────────────────┘
  ▾   M calc.rs                                                            +1 -1
           @@ -1,3 +1,3 @@
    1   1   fn total() -> u32 {
@@ -12,7 +13,6 @@ expression: wrapped
          ↪     price + price + price + price + price + price + price + price +
          ↪     price + price + price + price + TAIL
    3   3   }
-
 
 
 

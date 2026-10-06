@@ -26,25 +26,31 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     draw_in(f, f.area(), app);
 }
 
-/// Several repositories: the tab bar, then the active one.
+/// Several repositories: the tabs, then the active one's screens.
 pub fn draw_workspace(f: &mut Frame, ws: &mut Workspace) {
     let area = f.area();
     if !ws.show_bar() {
         draw_in(f, area, ws.active_app_mut());
         return;
     }
-    let [bar, rest] = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area);
-    tabs::draw(f, bar, ws);
-    draw_in(f, rest, ws.active_app_mut());
+    let [strip, rest] =
+        Layout::vertical([Constraint::Length(tabs::HEIGHT), Constraint::Min(0)]).areas(area);
+    let gap = tabs::draw(f, strip, ws);
+    draw_screen(f, rest, ws.active_app_mut(), gap);
 }
 
 /// One repository's screens, in `area`.
 pub fn draw_in(f: &mut Frame, area: Rect, app: &mut App) {
+    draw_screen(f, area, app, None);
+}
+
+/// `gap`: where the active tab opens into the box at the top.
+fn draw_screen(f: &mut Frame, area: Rect, app: &mut App, gap: Option<(u16, u16)>) {
     if app.diff.is_some() {
-        diff::draw(f, area, app);
+        diff::draw(f, area, app, gap);
         diff::draw_drawer(f, area, app);
     } else {
-        draw_main(f, area, app);
+        draw_main(f, area, app, gap);
     }
     // Settings open as a panel over whatever screen is showing.
     if app.settings.is_some() {
@@ -65,15 +71,18 @@ pub fn draw_in(f: &mut Frame, area: Rect, app: &mut App) {
     }
 }
 
-fn draw_main(f: &mut Frame, area: Rect, app: &mut App) {
-    let banner = header::banner_lines(app, area.width);
-    let [head, ban, body, foot] = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Length(banner.len() as u16),
+fn draw_main(f: &mut Frame, area: Rect, app: &mut App, gap: Option<(u16, u16)>) {
+    // The header and banner in a box; a column of room before its right
+    // border.
+    let banner = header::banner_lines(app, area.width.saturating_sub(3));
+    let [top, body, foot] = Layout::vertical([
+        Constraint::Length(3 + banner.len() as u16),
         Constraint::Min(0),
         Constraint::Length(1),
     ])
     .areas(area);
+    let inner = header::frame(f, top, app, gap);
+    let [head, ban] = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(inner);
     header::draw(f, head, app);
     header::draw_banner(f, ban, banner);
     let wide = !app.narrow_at(area.width);

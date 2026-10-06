@@ -131,7 +131,11 @@ git config spotter.base origin/develop   # the base exists only here, or as --ba
 Started in a folder that isn't a repository itself, say a `portal/` folder holding one repository per service, Spotter opens every repository inside it as a tab. You can also name them: `spotter api web`.
 
 ```
- 1 api ◌ 2 │ 2 worker │ 3 web 1                                         portal
+┌───────────┐
+│ 1 api ◌ 2 │ 2 worker  3 web 1                                      portal
+│           └──────────────────────────────────────────────────────────────┐
+│ feature/upload · main                               ● live · 2 to review │
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 
 - Each tab shows `◌` when the repository has uncommitted changes, and how many commits on its branch are left to review (a trunk branch with no upstream has no review count). Quiet repositories are dimmed.

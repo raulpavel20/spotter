@@ -2,17 +2,17 @@
 source: tests/settings.rs
 expression: "h.render(80, 24)"
 ---
- feature · main                                            ● live · 1 to review
-┌ Timeline ──┌ Settings ──────────────────────────────────────────┐────────────┐
-│▸◌ Uncommitt│ Review                                             │      clean │
-│ ● f1edb08 c│ ▸ Open diffs with the file explorer ··········· on │      +1 -1 │
-├────────────│   Collapse files marked viewed ················ on │────────────┤
-│ Σ Branch to│   Space continues into the next commit ········ on │file  +1 -1 │
-└────────────│   Σ includes uncommitted changes ·············· on │────────────┘
-┌ Files · Unc│                                                    │────────────┐
-│ working tre│ Diff                                               │            │
-│            │   Context lines ································ 3 │            │
-│            │   Ignore whitespace changes ·················· off │            │
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ feature · m┌ Settings ──────────────────────────────────────────┐1 to review │
+└────────────│ Review                                             │────────────┘
+┌ Timeline ──│ ▸ Open diffs with the file explorer ··········· on │────────────┐
+│▸◌ Uncommitt│   Collapse files marked viewed ················ on │      clean │
+│ ● f1edb08 c│   Space continues into the next commit ········ on │      +1 -1 │
+├────────────│   Σ includes uncommitted changes ·············· on │────────────┤
+│ Σ Branch to│                                                    │file  +1 -1 │
+└────────────│ Diff                                               │────────────┘
+┌ Files · Unc│   Context lines ································ 3 │────────────┐
+│ working tre│   Ignore whitespace changes ·················· off │            │
 │            │   Highlight changed words ····················· on │            │
 │            │   Line numbers ································ on │            │
 │            │   Wrap long lines ···························· off │            │
