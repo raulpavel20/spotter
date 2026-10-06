@@ -9,7 +9,7 @@ use crate::config::Config;
 use crate::git::Repo;
 use crate::git::diff::{DiffOpts, DiffSpec};
 use crate::model::FileChange;
-use crate::msg::{Msg, RefreshKind};
+use crate::msg::{Msg, Outbox, RefreshKind};
 use crate::refresh::{self, Cache, LoadedPatch, RefreshOpts, Snapshot};
 
 #[derive(Debug)]
@@ -148,6 +148,9 @@ impl PatchCache {
     }
 }
 
+/// Patch cache size for one repository.
+pub const PATCH_BUDGET: usize = 64 * 1024 * 1024;
+
 pub struct Worker {
     repo: Repo,
     cfg: Config,
@@ -164,9 +167,15 @@ impl Worker {
             cfg,
             base,
             cache: Cache::default(),
-            patches: PatchCache::new(64 * 1024 * 1024),
+            patches: PatchCache::new(PATCH_BUDGET),
             last: None,
         }
+    }
+
+    /// Caps the patch cache (several repositories share the memory).
+    pub fn with_patch_budget(mut self, bytes: usize) -> Self {
+        self.patches = PatchCache::new(bytes);
+        self
     }
 
     pub fn refresh(&mut self, kind: RefreshKind, opts: &RefreshOpts) -> Result<Snapshot, String> {
@@ -217,7 +226,7 @@ impl Worker {
         self.cfg = cfg;
     }
 
-    fn run(mut self, rx: Receiver<Request>, out: Sender<Msg>) {
+    fn run(mut self, rx: Receiver<Request>, out: Outbox) {
         while let Ok(first) = rx.recv() {
             let mut reqs = vec![first];
             reqs.extend(rx.try_iter());
@@ -249,11 +258,15 @@ impl Worker {
 }
 
 /// Starts the worker thread; drop the returned sender to stop it.
-pub fn spawn(repo: Repo, cfg: Config, base: Option<String>, out: Sender<Msg>) -> Sender<Request> {
+pub fn spawn(worker: Worker, out: impl Into<Outbox>) -> Sender<Request> {
+    let out = out.into();
     let (tx, rx) = mpsc::channel();
-    let worker = Worker::new(repo, cfg, base);
+    let name = match out.tab() {
+        Some(t) => format!("spotter-worker-{}", t.0),
+        None => "spotter-worker".into(),
+    };
     thread::Builder::new()
-        .name("spotter-worker".into())
+        .name(name)
         .spawn(move || worker.run(rx, out))
         .expect("spawn worker thread");
     tx

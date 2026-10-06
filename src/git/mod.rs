@@ -7,6 +7,7 @@ pub mod log;
 pub mod patch;
 pub mod repo;
 pub mod status;
+pub mod write;
 
 pub use cmd::{Git, GitError, Sub};
 pub use repo::{Repo, RepoOp};

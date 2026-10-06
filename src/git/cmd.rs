@@ -1,8 +1,11 @@
 //! The single choke point for running git.
 //!
-//! Every git invocation goes through [`Git::cmd`]. Subcommands are a closed
-//! enum, so nothing outside the read-only allowlist can be spawned, and the
-//! fixed global arguments and environment are always applied.
+//! Every git invocation goes through [`Git::cmd`] or [`Git::write`].
+//! Subcommands are closed enums, so nothing outside the allowlists can be
+//! spawned, and the fixed global arguments and environment are always
+//! applied. [`Sub`] is read-only and is all that refreshes use;
+//! [`WriteSub`] is reachable only from [`super::write`], for the commits and
+//! pushes you confirm with `git.actions` on.
 
 use std::ffi::{OsStr, OsString};
 use std::fmt;
@@ -63,6 +66,7 @@ pub enum Sub {
     CheckAttr,
     HashObject,
     Config,
+    Var,
 }
 
 impl Sub {
@@ -81,6 +85,7 @@ impl Sub {
         Sub::CheckAttr,
         Sub::HashObject,
         Sub::Config,
+        Sub::Var,
     ];
 
     pub fn name(self) -> &'static str {
@@ -99,11 +104,48 @@ impl Sub {
             Sub::CheckAttr => "check-attr",
             Sub::HashObject => "hash-object",
             Sub::Config => "config",
+            Sub::Var => "var",
         }
     }
 
     fn takes_diff_args(self) -> bool {
         matches!(self, Sub::Log | Sub::Show | Sub::Diff)
+    }
+}
+
+/// The commands that write, each with a fixed argument shape (see
+/// [`validate_write`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WriteSub {
+    Add,
+    Commit,
+    Push,
+    Reset,
+}
+
+impl WriteSub {
+    pub fn name(self) -> &'static str {
+        match self {
+            WriteSub::Add => "add",
+            WriteSub::Commit => "commit",
+            WriteSub::Push => "push",
+            WriteSub::Reset => "reset",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Verb {
+    Read(Sub),
+    Write(WriteSub),
+}
+
+impl Verb {
+    fn name(self) -> &'static str {
+        match self {
+            Verb::Read(s) => s.name(),
+            Verb::Write(w) => w.name(),
+        }
     }
 }
 
@@ -168,12 +210,22 @@ impl Git {
     }
 
     pub fn cmd(&self, sub: Sub) -> Cmd<'_> {
+        self.verb(Verb::Read(sub))
+    }
+
+    /// A command that writes; only [`super::write`] uses it.
+    pub(crate) fn write(&self, sub: WriteSub) -> Cmd<'_> {
+        self.verb(Verb::Write(sub))
+    }
+
+    fn verb(&self, verb: Verb) -> Cmd<'_> {
         Cmd {
             git: self,
-            sub,
+            verb,
             args: Vec::new(),
             stdin: None,
             ok_codes: vec![0],
+            env: Vec::new(),
         }
     }
 }
@@ -181,10 +233,11 @@ impl Git {
 /// A git invocation under construction.
 pub struct Cmd<'g> {
     git: &'g Git,
-    sub: Sub,
+    verb: Verb,
     args: Vec<OsString>,
     stdin: Option<Vec<u8>>,
     ok_codes: Vec<i32>,
+    env: Vec<(OsString, OsString)>,
 }
 
 /// Output of a successful call. `code` is one of the call's ok codes.
@@ -215,6 +268,12 @@ impl Cmd<'_> {
         self
     }
 
+    /// Extra environment for this call (the password helper for writes).
+    pub fn envs(mut self, env: &[(OsString, OsString)]) -> Self {
+        self.env.extend(env.iter().cloned());
+        self
+    }
+
     /// Exit codes that count as success for this call, e.g. `[0, 1]` for
     /// `diff --no-index` or `rev-parse --verify -q`.
     pub fn ok_codes(mut self, codes: &[i32]) -> Self {
@@ -226,10 +285,12 @@ impl Cmd<'_> {
     pub fn argv(&self) -> Vec<OsString> {
         let mut argv: Vec<OsString> = vec!["-C".into(), self.git.dir.clone().into_os_string()];
         argv.extend(GLOBAL_ARGS.iter().map(OsString::from));
-        argv.push(self.sub.name().into());
-        if self.sub.takes_diff_args() {
+        argv.push(self.verb.name().into());
+        if let Verb::Read(sub) = self.verb
+            && sub.takes_diff_args()
+        {
             argv.extend(DIFF_ARGS.iter().map(OsString::from));
-            if self.sub == Sub::Log {
+            if sub == Sub::Log {
                 argv.push("--root".into());
             }
         }
@@ -238,7 +299,7 @@ impl Cmd<'_> {
     }
 
     fn display(&self) -> String {
-        let mut s = format!("git {}", self.sub.name());
+        let mut s = format!("git {}", self.verb.name());
         for a in self.args.iter().take(4) {
             s.push(' ');
             s.push_str(&a.to_string_lossy());
@@ -258,7 +319,14 @@ impl Cmd<'_> {
                 .iter()
                 .map(|a| a.to_string_lossy().into_owned())
                 .collect();
-            let what = format!("git {} {}", self.sub.name(), args.join(" "));
+            // Which repository, when there are several.
+            let repo = self
+                .git
+                .dir
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy();
+            let what = format!("[{repo}] git {} {}", self.verb.name(), args.join(" "));
             let ms = started.elapsed().as_millis();
             match &result {
                 Ok(o) => format!("{what} -> {} in {ms}ms, {} bytes", o.code, o.stdout.len()),
@@ -269,7 +337,11 @@ impl Cmd<'_> {
     }
 
     fn run_inner(&self) -> Result<Output, GitError> {
-        if let Err(reason) = validate(self.sub, &self.args) {
+        let checked = match self.verb {
+            Verb::Read(sub) => validate(sub, &self.args),
+            Verb::Write(sub) => validate_write(sub, &self.args),
+        };
+        if let Err(reason) = checked {
             return Err(GitError {
                 command: self.display(),
                 code: None,
@@ -280,7 +352,6 @@ impl Cmd<'_> {
         cmd.args(self.argv())
             .env("GIT_OPTIONAL_LOCKS", "0")
             .env("GIT_TERMINAL_PROMPT", "0")
-            .env("LC_ALL", "C")
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .stdin(if self.stdin.is_some() {
@@ -288,7 +359,11 @@ impl Cmd<'_> {
             } else {
                 Stdio::null()
             });
-        for (k, v) in &self.git.extra_env {
+        // Output is parsed in C; writes keep the user's locale for hooks.
+        if let Verb::Read(_) = self.verb {
+            cmd.env("LC_ALL", "C");
+        }
+        for (k, v) in self.git.extra_env.iter().chain(&self.env) {
             cmd.env(k, v);
         }
         let err = |code, stderr: String| GitError {
@@ -316,7 +391,15 @@ impl Cmd<'_> {
                 stdout: out.stdout,
                 code: c,
             }),
-            _ => Err(err(code, String::from_utf8_lossy(&out.stderr).into_owned())),
+            _ => {
+                // Some writes explain themselves on stdout (`nothing to
+                // commit`).
+                let msg = match self.verb {
+                    Verb::Write(_) if out.stderr.trim_ascii().is_empty() => &out.stdout,
+                    _ => &out.stderr,
+                };
+                Err(err(code, String::from_utf8_lossy(msg).into_owned()))
+            }
         }
     }
 
@@ -329,6 +412,48 @@ impl Cmd<'_> {
     pub fn line(self) -> Result<String, GitError> {
         self.out()
             .map(|o| String::from_utf8_lossy(&o).trim_end().to_owned())
+    }
+}
+
+/// The only argument shapes writes may have; paths follow `--`.
+/// - `add -- <paths>`
+/// - `reset -q -- <paths>`
+/// - `commit -F - --only -- <paths>`, the message on stdin
+/// - `push --porcelain [-u] <remote> <src>:<dst>`, never a forced refspec
+fn validate_write(sub: WriteSub, args: &[OsString]) -> Result<(), String> {
+    let a: Vec<String> = args
+        .iter()
+        .map(|s| s.to_string_lossy().into_owned())
+        .collect();
+    let refused = || Err(format!("{} arguments {a:?}", sub.name()));
+    let paths_after = |prefix: &[&str]| {
+        if a.len() > prefix.len() && a.iter().zip(prefix).all(|(x, p)| x == p) {
+            Ok(())
+        } else {
+            refused()
+        }
+    };
+    match sub {
+        WriteSub::Add => paths_after(&["--"]),
+        WriteSub::Reset => paths_after(&["-q", "--"]),
+        WriteSub::Commit => paths_after(&["-F", "-", "--only", "--"]),
+        WriteSub::Push => {
+            let rest = match a.as_slice() {
+                [p, u, rest @ ..] if p == "--porcelain" && u == "-u" => rest,
+                [p, rest @ ..] if p == "--porcelain" => rest,
+                _ => return refused(),
+            };
+            match rest {
+                [remote, spec]
+                    if !remote.starts_with('-')
+                        && !spec.starts_with(['+', '-'])
+                        && spec.contains(':') =>
+                {
+                    Ok(())
+                }
+                _ => refused(),
+            }
+        }
     }
 }
 
@@ -412,8 +537,51 @@ mod tests {
                 "check-attr",
                 "hash-object",
                 "config",
+                "var",
             ]
         );
+    }
+
+    fn write_ok(sub: WriteSub, args: &[&str]) -> bool {
+        let args: Vec<OsString> = args.iter().map(OsString::from).collect();
+        validate_write(sub, &args).is_ok()
+    }
+
+    #[test]
+    fn writes_only_take_their_fixed_shapes() {
+        assert!(write_ok(WriteSub::Add, &["--", "a.txt", "-weird"]));
+        assert!(!write_ok(WriteSub::Add, &["-A"]));
+        assert!(!write_ok(WriteSub::Add, &["--"]));
+        assert!(write_ok(
+            WriteSub::Commit,
+            &["-F", "-", "--only", "--", "a"]
+        ));
+        assert!(!write_ok(WriteSub::Commit, &["-am", "msg"]));
+        assert!(!write_ok(
+            WriteSub::Commit,
+            &["--amend", "-F", "-", "--only", "--", "a"]
+        ));
+        assert!(write_ok(WriteSub::Reset, &["-q", "--", "a"]));
+        assert!(!write_ok(WriteSub::Reset, &["--hard"]));
+        assert!(write_ok(
+            WriteSub::Push,
+            &["--porcelain", "origin", "refs/heads/a:refs/heads/a"]
+        ));
+        assert!(write_ok(
+            WriteSub::Push,
+            &["--porcelain", "-u", "origin", "a:a"]
+        ));
+        // Never forced, never other options.
+        assert!(!write_ok(
+            WriteSub::Push,
+            &["--porcelain", "origin", "+a:a"]
+        ));
+        assert!(!write_ok(
+            WriteSub::Push,
+            &["--porcelain", "--force", "origin", "a:a"]
+        ));
+        assert!(!write_ok(WriteSub::Push, &["--porcelain", "origin", "a"]));
+        assert!(!write_ok(WriteSub::Push, &["origin", "a:a"]));
     }
 
     #[test]

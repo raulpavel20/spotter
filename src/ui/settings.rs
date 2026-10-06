@@ -28,6 +28,7 @@ fn section_title(section: &str) -> &'static str {
         "theme" => "Appearance",
         "layout" => "Layout",
         "editor" => "Editor",
+        "git" => "Git",
         "repo" => "Repository",
         _ => "Other",
     }

@@ -1,0 +1,20 @@
+---
+source: tests/workspace.rs
+expression: "h.render(60, 16)"
+---
+‹ 3 collector │ 4 dashboard-frontend │ 5 exporter │ 6 forms
+ main · last 1 commit                  ● live · 1 to review
+ trunk mode · no upstream · last 20 commits
+┌ Timeline ────────────────────────────────────────────────┐
+│▸◌ Uncommitted                                      clean │
+│ ● 55d56f9 a                                          +1  │
+├──────────────────────────────────────────────────────────┤
+│ Σ Branch total                               1 file  +1  │
+└──────────────────────────────────────────────────────────┘
+┌ Files · Uncommitted ─────────────────────────────────────┐
+│ working tree clean                                       │
+│                                                          │
+│                                                          │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+ enter files · u next to review · w/b jump · ? help

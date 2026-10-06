@@ -7,6 +7,7 @@ use std::io::{self, Stdout, stdout};
 use std::sync::Once;
 
 use crossterm::cursor::Show;
+use crossterm::event::{DisableBracketedPaste, EnableBracketedPaste};
 use crossterm::execute;
 use crossterm::terminal::{
     Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -38,13 +39,14 @@ pub fn init() -> io::Result<Tui> {
 
 fn enable() -> io::Result<()> {
     enable_raw_mode()?;
-    execute!(stdout(), EnterAlternateScreen)
+    // Pasted text arrives as one event, so a paste can't press keys.
+    execute!(stdout(), EnterAlternateScreen, EnableBracketedPaste)
 }
 
 /// Best-effort restore; safe to call more than once.
 pub fn restore() {
     let _ = disable_raw_mode();
-    let _ = execute!(stdout(), LeaveAlternateScreen, Show);
+    let _ = execute!(stdout(), DisableBracketedPaste, LeaveAlternateScreen, Show);
 }
 
 /// Hand the terminal to a child process (an editor).

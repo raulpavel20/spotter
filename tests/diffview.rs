@@ -387,7 +387,7 @@ fn z_wraps_long_lines_for_the_session() {
     assert!(h.app.diff.as_ref().unwrap().wrap.is_some());
     h.keys("z");
     assert!(!h.render(80, 24).contains("TAIL"));
-    assert!(h.saved.is_empty());
+    assert!(h.rec.saved.is_empty());
     assert!(h.render(120, 24).contains("z wrap"));
     h.keys("z");
     assert!(h.render(120, 24).contains("z no wrap"));

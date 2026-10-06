@@ -5,7 +5,7 @@
 //! git dirs only HEAD, the index, refs and in-progress state matter.
 
 use std::path::{Component, Path, PathBuf};
-use std::sync::mpsc::{self, Sender};
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -14,7 +14,7 @@ use notify::event::{AccessKind, AccessMode, CreateKind, EventKind};
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 
 use crate::git::Repo;
-use crate::msg::{Msg, RefreshKind, WatchStatus};
+use crate::msg::{Msg, Outbox, RefreshKind, WatchStatus};
 
 pub const DEBOUNCE: Duration = Duration::from_millis(250);
 
@@ -119,18 +119,39 @@ fn is_ignored_dir(dir: &Path) -> bool {
     !visible
 }
 
+/// A watch error, with the system limit to raise when one ran out
+/// (several repositories, or other tools, share them).
+fn explain(e: &notify::Error) -> String {
+    let os = match &e.kind {
+        notify::ErrorKind::MaxFilesWatch => Some(28),
+        notify::ErrorKind::Io(io) => io.raw_os_error(),
+        _ => None,
+    };
+    match os {
+        // ENOSPC: out of watches; EMFILE: out of inotify instances.
+        Some(28) if cfg!(target_os = "linux") => {
+            format!("{e} (raise fs.inotify.max_user_watches)")
+        }
+        Some(24) if cfg!(target_os = "linux") => {
+            format!("{e} (raise fs.inotify.max_user_instances)")
+        }
+        _ => e.to_string(),
+    }
+}
+
 pub struct WatchHandle {
     _thread: thread::JoinHandle<()>,
 }
 
 /// Starts watching. On error the caller falls back to polling.
-pub fn spawn(repo: &Repo, out: Sender<Msg>) -> Result<WatchHandle, String> {
+pub fn spawn(repo: &Repo, out: impl Into<Outbox>) -> Result<WatchHandle, String> {
+    let out = out.into();
     let cls = Classifier::new(repo);
     let (ev_tx, ev_rx) = mpsc::channel::<notify::Result<Event>>();
     let mut watcher: RecommendedWatcher = notify::recommended_watcher(move |res| {
         let _ = ev_tx.send(res);
     })
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| explain(&e))?;
 
     let mut watched = 0usize;
     for dir in walk_dirs(&cls.root) {
@@ -139,7 +160,7 @@ pub fn spawn(repo: &Repo, out: Sender<Msg>) -> Result<WatchHandle, String> {
         if let Err(e) = watcher.watch(&dir, RecursiveMode::NonRecursive)
             && dir.exists()
         {
-            return Err(format!("{}: {e}", dir.display()));
+            return Err(format!("{}: {}", dir.display(), explain(&e)));
         }
     }
     crate::log::line(|| format!("watching {} worktree directories", watched));
@@ -150,7 +171,7 @@ pub fn spawn(repo: &Repo, out: Sender<Msg>) -> Result<WatchHandle, String> {
     for d in &git_dirs {
         watcher
             .watch(d, RecursiveMode::NonRecursive)
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| explain(&e))?;
         for sub in REFS_DIRS {
             let p = d.join(sub);
             if p.is_dir() {
@@ -160,7 +181,10 @@ pub fn spawn(repo: &Repo, out: Sender<Msg>) -> Result<WatchHandle, String> {
     }
 
     let thread = thread::Builder::new()
-        .name("spotter-watch".into())
+        .name(match out.tab() {
+            Some(t) => format!("spotter-watch-{}", t.0),
+            None => "spotter-watch".into(),
+        })
         .spawn(move || {
             let mut watcher = watcher;
             let handle = |ev: notify::Result<Event>,

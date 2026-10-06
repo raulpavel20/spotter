@@ -20,8 +20,9 @@ use crate::git::cmd::{Git, Sub};
     about = "A live, read-only review view of what changed on your branch"
 )]
 pub struct Args {
-    /// Repository to watch (defaults to the current directory).
-    pub path: Option<PathBuf>,
+    /// Repositories, or folders holding some (default: the current
+    /// directory). Several open as tabs.
+    pub paths: Vec<PathBuf>,
     /// Base ref to compare against, overriding automatic resolution.
     #[arg(long, value_name = "REF")]
     pub base: Option<String>,
@@ -262,6 +263,13 @@ pub const SETTINGS: &[Setting] = &[
         Kind::Choice(&["auto", "true", "false"]),
     ),
     s(
+        "git.actions",
+        "spotter.gitactions",
+        "Commit and push from Spotter",
+        "c commits the files you pick and P pushes the current branch. Off: Spotter never writes to the repository.",
+        BOOL,
+    ),
+    s(
         "repo.trunk_depth",
         "spotter.trunkdepth",
         "Commits shown without a base",
@@ -352,6 +360,7 @@ pub struct Config {
     pub explorer_width: u16,
     pub editor: Option<String>,
     pub editor_gui: Option<bool>,
+    pub git_actions: bool,
     pub trunk_depth: usize,
     /// `spotter.base` (git config only: it is per repository).
     pub base: Option<String>,
@@ -381,6 +390,7 @@ impl Default for Config {
             explorer_width: 30,
             editor: None,
             editor_gui: None,
+            git_actions: false,
             trunk_depth: 20,
             base: None,
         }
@@ -423,6 +433,7 @@ impl Config {
                 }
                 .into(),
             ),
+            "git.actions" => Value::Bool(self.git_actions),
             "repo.trunk_depth" => Value::Int(self.trunk_depth as i64),
             _ => Value::Text(String::new()),
         }
@@ -487,6 +498,7 @@ impl Config {
                     _ => None,
                 }
             }
+            "git.actions" => self.git_actions = b,
             "repo.trunk_depth" => self.trunk_depth = n as usize,
             _ => {}
         }

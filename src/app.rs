@@ -1,7 +1,9 @@
 //! Application state and `update(msg) -> effects`. No I/O happens here
 //! (marks are only written when main executes `Effect::SaveMarks`).
 
-use std::collections::HashMap;
+pub mod actions;
+
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -16,10 +18,13 @@ use crate::refresh::{HeadChange, RefreshOpts, Snapshot};
 use crate::review::{self, Marks};
 use crate::ui::glyphs::{self, Glyphs};
 use crate::ui::palette::Palette;
+use actions::{CommitPanel, PromptPanel, PushPanel, TextInput};
 
-/// Toasts last 3 s; polling runs every 2 s (in 250 ms ticks).
+/// Toasts last 3 s; polling runs every 2 s (in 250 ms ticks), every 8 s
+/// in a tab nobody is looking at.
 pub const TOAST_TICKS: u32 = 12;
 pub const POLL_TICKS: u32 = 8;
+pub const BACKGROUND_POLL_TICKS: u32 = 32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Focus {
@@ -60,6 +65,14 @@ impl Glyph {
             Glyph::All => g.viewed,
         }
     }
+}
+
+/// Session toggles that follow you from one repository's tab to the next.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Session {
+    pub ws_override: Option<bool>,
+    pub wrap_override: Option<bool>,
+    pub explorer_open: bool,
 }
 
 /// The settings screen's cursor.
@@ -104,6 +117,21 @@ pub struct App {
     /// The file explorer in the diff view (remembered for the session).
     pub explorer_open: bool,
     pub diff_focus: DiffFocus,
+    /// `c`: the commit panel (`git.actions`).
+    pub commit: Option<CommitPanel>,
+    /// A message from a commit panel closed without committing.
+    commit_draft: Option<(TextInput, TextInput)>,
+    /// `P`: the push confirmation.
+    pub push: Option<PushPanel>,
+    /// Password prompts from git or ssh, oldest first.
+    pub prompts: VecDeque<PromptPanel>,
+    /// Our own commit is on its way into the snapshot: its toast says
+    /// more than "+1 commit".
+    own_commit: bool,
+    /// The repository's name, when Spotter shows several in tabs.
+    pub label: Option<String>,
+    /// Another tab is showing: poll less often.
+    pub background: bool,
     seq: u64,
     applied_gen: u64,
     patch_gen: u64,
@@ -152,6 +180,13 @@ impl App {
             env,
             explorer_open: false,
             diff_focus: DiffFocus::Diff,
+            commit: None,
+            commit_draft: None,
+            push: None,
+            prompts: VecDeque::new(),
+            own_commit: false,
+            label: None,
+            background: false,
             seq: 0,
             applied_gen: 0,
             patch_gen: 0,
@@ -315,6 +350,69 @@ impl App {
         self.snap.as_ref()?.spec(id, &self.empty_tree)
     }
 
+    // --- living in a tab ----------------------------------------------------
+
+    /// Keys go to something being typed into or answered here, not to
+    /// switching tabs. A panel that is busy running git lets you leave.
+    pub fn captures_keys(&self) -> bool {
+        self.help
+            || self.settings.is_some()
+            || !self.prompts.is_empty()
+            || self.commit.as_ref().is_some_and(|p| !p.busy)
+            || self.push.as_ref().is_some_and(|p| !p.busy)
+    }
+
+    /// Something here waits for you: a password prompt, a push to confirm,
+    /// a commit that failed.
+    pub fn needs_attention(&self) -> bool {
+        !self.prompts.is_empty()
+            || self.commit.as_ref().is_some_and(|p| !p.busy)
+            || self.push.as_ref().is_some_and(|p| !p.busy)
+    }
+
+    pub fn session(&self) -> Session {
+        Session {
+            ws_override: self.ws_override,
+            wrap_override: self.wrap_override,
+            explorer_open: self.explorer_open,
+        }
+    }
+
+    /// Takes over the toggles from the tab you came from.
+    pub fn adopt_session(&mut self, s: Session) -> Vec<Effect> {
+        self.ws_override = s.ws_override;
+        self.wrap_override = s.wrap_override;
+        // A drawer only makes sense while it has focus.
+        self.explorer_open =
+            s.explorer_open && !(self.narrow() && self.diff_focus == DiffFocus::Diff);
+        let mut fx = self.reload_diff();
+        fx.extend(self.view_effects());
+        fx
+    }
+
+    /// Colors again, after the highlighter switched themes.
+    pub fn rehighlight(&mut self) -> Vec<Effect> {
+        if let Some(d) = &mut self.diff {
+            d.highlights.clear();
+            d.hl_requested.clear();
+        }
+        self.view_effects()
+    }
+
+    /// Changes when HEAD, the branch or the uncommitted files do; `None`
+    /// before the first refresh.
+    pub fn fingerprint(&self) -> Option<u64> {
+        use std::hash::{Hash, Hasher};
+        let s = self.snap.as_ref()?;
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        s.base.head.hash(&mut h);
+        s.base.branch.hash(&mut h);
+        for f in &s.uncommitted {
+            f.mark_key().hash(&mut h);
+        }
+        Some(h.finish())
+    }
+
     // --- update -----------------------------------------------------------
 
     pub fn update(&mut self, msg: Msg) -> Vec<Effect> {
@@ -327,6 +425,7 @@ impl App {
 
     fn handle(&mut self, msg: Msg) -> Vec<Effect> {
         match msg {
+            Msg::Tab(_, msg) => self.handle(*msg),
             Msg::Key(k) => {
                 if k.kind != KeyEventKind::Press {
                     return Vec::new();
@@ -337,6 +436,16 @@ impl App {
                 }
                 if ctrl(&k, 'c') {
                     return vec![Effect::Quit];
+                }
+                // Panels over the screen, a password prompt on top.
+                if !self.prompts.is_empty() {
+                    return self.prompt_key(k);
+                }
+                if self.commit.is_some() {
+                    return self.commit_key(k);
+                }
+                if self.push.is_some() {
+                    return self.push_key(k);
                 }
                 if self.settings.is_some() {
                     let mut fx = self.settings_key(k);
@@ -431,6 +540,21 @@ impl App {
                 Vec::new()
             }
             Msg::ConfigReloaded(loaded) => self.reload_config(*loaded),
+            Msg::AskPass { id, prompt, kind } => {
+                self.ask(id, prompt, kind);
+                Vec::new()
+            }
+            Msg::Committed(result) => self.committed(result),
+            Msg::PushInfo(info) => self.push_info(info),
+            Msg::Pushed(result) => self.pushed(result),
+            Msg::MessageEdited(text) => {
+                self.message_edited(&text);
+                Vec::new()
+            }
+            Msg::Paste(text) => {
+                self.paste(&text);
+                Vec::new()
+            }
             Msg::Tick => {
                 self.ticks = self.ticks.wrapping_add(1);
                 if let Some((_, left)) = &mut self.toast {
@@ -439,7 +563,12 @@ impl App {
                         self.toast = None;
                     }
                 }
-                if self.watch != WatchStatus::Live && self.ticks.is_multiple_of(POLL_TICKS) {
+                let every = if self.background {
+                    BACKGROUND_POLL_TICKS
+                } else {
+                    POLL_TICKS
+                };
+                if self.watch != WatchStatus::Live && self.ticks.is_multiple_of(every) {
                     return vec![self.refresh(RefreshKind::Full)];
                 }
                 Vec::new()
@@ -555,7 +684,9 @@ impl App {
             .unwrap_or(self.file_sel)
             .min(files.len().saturating_sub(1));
 
+        let own = std::mem::take(&mut self.own_commit) && change.is_some();
         match change {
+            Some(HeadChange::Added(1)) if own => {}
             Some(HeadChange::Added(n)) => {
                 self.toast(format!("+{n} commit{}", if n == 1 { "" } else { "s" }))
             }
@@ -989,6 +1120,12 @@ impl App {
         if key_is(k, ',') {
             self.settings = Some(SettingsState::default());
             return Some(Vec::new());
+        }
+        if key_is(k, 'c') {
+            return Some(self.open_commit());
+        }
+        if key_is(k, 'P') {
+            return Some(self.open_push());
         }
         if key_is(k, 'i') {
             self.opts.include_wt = !self.opts.include_wt;

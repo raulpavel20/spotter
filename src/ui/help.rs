@@ -15,6 +15,7 @@ const EVERYWHERE: &[(&str, &str)] = &[
     ("n / p", "newer / older commit"),
     ("i", "branch total: toggle uncommitted changes"),
     ("m", "merge: remerge-diff / first-parent"),
+    ("c · P", "commit · push (turn on git actions in settings)"),
     ("ctrl-l", "refresh and redraw"),
     (", · ?", "settings · this help"),
 ];
@@ -53,14 +54,23 @@ fn section(lines: &mut Vec<Line<'static>>, title: &str, keys: &[(&str, &str)]) {
     }
 }
 
+/// With several repositories open.
+const REPOS: &[(&str, &str)] = &[("< > 1-9", "previous / next repository · by number")];
+
 pub fn draw(
     f: &mut Frame,
     area: Rect,
     in_diff: bool,
+    repos: bool,
     border: ratatui::symbols::border::Set<'static>,
 ) {
     let mut lines = Vec::new();
-    section(&mut lines, "Everywhere", EVERYWHERE);
+    if repos {
+        let all: Vec<_> = REPOS.iter().chain(EVERYWHERE).copied().collect();
+        section(&mut lines, "Everywhere", &all);
+    } else {
+        section(&mut lines, "Everywhere", EVERYWHERE);
+    }
     if in_diff {
         section(&mut lines, "Diff view", DIFF);
     } else {

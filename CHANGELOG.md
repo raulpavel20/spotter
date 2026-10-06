@@ -8,6 +8,13 @@ All notable changes are listed here. The format follows
 
 ### Added
 - `z` in the diff view wraps long lines, for the session; `diff.wrap_lines` (`spotter.wrapLines`) sets whether diffs start wrapped.
+- A folder of repositories opens them as tabs: run `spotter` in a folder that holds several repositories (up to three folders deep), or name them (`spotter api web`). `<` / `>` and `1`–`9` switch; a tab shows uncommitted changes and commits left to review, and turns bold when something changes there.
+- Commit and push from Spotter, off by default (`git.actions`, `spotter.gitActions`). `c` commits the files you pick, with the viewed ones picked to start, using `git commit --only`; `P` pushes the current branch, or publishes it. Password prompts from git and ssh appear in a panel.
+
+### Changed
+- Pasted text arrives as one paste (bracketed paste) instead of as key presses.
+- Started outside a repository, Spotter looks for repositories inside the folder before giving up.
+- The file watcher starts in the background, so the first screen appears sooner in big repositories.
 
 ### Fixed
 - Changing `diff.ignore_whitespace` in the settings now takes effect after `W` was pressed.

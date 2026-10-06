@@ -4,7 +4,7 @@
 
 Run Spotter in its own terminal tab, next to the tab where your coding agent (Claude Code, Codex, Aider…) works. While the agent edits and commits, Spotter keeps an up-to-date timeline: every commit on the branch, the uncommitted work, and the branch's total diff. Switch to the Spotter tab whenever you want to catch up, and it remembers which files you have already reviewed. A split pane next to the agent works too: the layout adapts down to 80 columns.
 
-Spotter is read-only. It never stages, commits or takes git's index lock, so it can't get in the agent's way.
+Spotter is read-only by default. It never stages, commits or takes git's index lock, so it can't get in the agent's way. If you turn it on, it can also [commit the files you've reviewed and push](#commit-and-push).
 
 ![Spotter: reviewing an agent's commits as they land](assets/demo.gif)
 
@@ -31,6 +31,7 @@ Open a second tab in the agent's repository and start Spotter there:
 ```sh
 spotter            # in any git repository
 spotter ~/code/app # or point it at one
+spotter ~/portal   # a folder of repositories opens them as tabs
 ```
 
 **The review loop:** press `u` to jump to the oldest commit you haven't reviewed, then `Enter` to open its diff. Read, and press `Space` to mark each file viewed: the file collapses and Spotter moves to the next unviewed file, then on into the next commit. When the agent commits again, the new commit shows up as `●` and the "to review" count goes up.
@@ -55,9 +56,11 @@ Spotter picks the base for you. On a feature branch it is the closest of `main`,
 | `n` / `p` | Newer / older commit |
 | `w` / `b` | Jump to ◌ Uncommitted / Σ Branch total |
 | `i` | Σ: include or exclude uncommitted changes |
+| `c` · `P` | Commit · push, [when turned on](#commit-and-push) |
 | `,` | Settings |
 | `?` | Help |
 | `q` / `Esc` | Back / quit |
+| `<` / `>` · `1`–`9` | Previous / next repository · repository by number, with [several open](#several-repositories) |
 
 | Main screen | |
 |---|---|
@@ -118,15 +121,41 @@ git config spotter.base origin/develop   # the base exists only here, or as --ba
 | `layout.timeline_width`, `layout.explorer_width` (% of the width) | `spotter.timelineWidth`, `spotter.explorerWidth` | `45`, `30` |
 | `editor.command`, e.g. `code -g {file}:{line}` (empty: `$VISUAL`, `$EDITOR`, `vi`) | `spotter.editor` | — |
 | `editor.gui`: `auto`, `true` or `false` | `spotter.editorGui` | `auto` |
+| `git.actions`: [commit and push](#commit-and-push) from Spotter | `spotter.gitActions` | `false` |
 | `repo.trunk_depth`: commits shown when there is no base | `spotter.trunkDepth` | `20` |
 
 </details>
 
+## Several repositories
+
+Started in a folder that isn't a repository itself, say a `portal/` folder holding one repository per service, Spotter opens every repository inside it as a tab. You can also name them: `spotter api web`.
+
+```
+ 1 api ◌ 2 │ 2 worker │ 3 web 1                                         portal
+```
+
+- Each tab shows `◌` when the repository has uncommitted changes, and how many commits on its branch are left to review (a trunk branch with no upstream has no review count). Quiet repositories are dimmed.
+- When the agent changes a repository you aren't looking at, its tab turns bold until you look. Spotter never switches tabs by itself.
+- `<` and `>` switch tabs, `1`–`9` jump to one. Each tab keeps its own place; `z`, `W` and the file explorer stay as you set them.
+- When a commit or push finishes in another tab, the tab you're on says so. A password prompt waiting in another tab marks it with `!`.
+- Spotter looks up to three folders deep. It skips hidden folders, `node_modules`, `target`, `vendor` and `venv`, and doesn't look inside the repositories it finds (submodules and nested repositories stay theirs). It opens at most 32; past that, name the ones you want.
+- A repository cloned into the folder while Spotter runs shows up the next time you start it.
+
+## Commit and push
+
+Off by default: turn on **Commit and push from Spotter** in the settings (`,`), or run `git config spotter.gitActions true` for one repository.
+
+- `c` opens the commit panel with the uncommitted files, the ones you've marked viewed already picked. `space` picks a file, `a` all of them, `n` none, `v` the viewed ones. Write a summary, and a body after `tab` (`Ctrl-E` opens git's editor instead), then press `Enter`.
+- Spotter commits exactly the picked files, as they are on disk (`git commit --only`). Everything else stays as it was, including whatever the agent has staged. The new commit shows up already viewed.
+- `P` pushes the current branch to its upstream once you confirm. A branch without one is published to `origin` and starts tracking it. Spotter never force-pushes: if the remote has moved on, it tells you to pull in git first.
+- When git or ssh need a username, password or passphrase, Spotter asks in a panel. For these commands Spotter is git's `GIT_ASKPASS` and ssh's `SSH_ASKPASS` helper: answers go straight to git over a private socket and are never logged. A commit signed with gpg briefly hands the terminal to gpg's own prompt.
+
 ## Safe to run next to an agent
 
-- Spotter only runs read-only git commands, checked against an allowlist in the code. It never writes `.git/index` or takes `index.lock`, so it can't make an agent's `git commit` fail.
-- Its only write is the viewed-marks file, `.git/spotter/viewed.json`.
-- It refreshes from file-system events: gitignored directories such as `node_modules` and `target` aren't watched. If watching fails, it falls back to polling every 2 seconds (`--no-watch` forces polling).
+- Refreshes only run read-only git commands, checked against an allowlist in the code. They never write `.git/index` or take `index.lock`, so they can't make an agent's `git commit` fail.
+- Unless you commit or push, Spotter's only write is the viewed-marks file, `.git/spotter/viewed.json`.
+- Commit and push are off by default and run only when you confirm them, through their own short allowlist (`add`, `commit`, `push`, `reset`). A commit stops with "git is busy" rather than wait for the agent's index lock, and a push is never forced.
+- It refreshes from file-system events: gitignored directories such as `node_modules` and `target` aren't watched. If watching fails, it falls back to polling every 2 seconds (`--no-watch` forces polling); a repository in a tab you aren't looking at is polled every 8 seconds.
 
 ## Troubleshooting
 

@@ -1,6 +1,7 @@
 //! Drawing. Everything here reads `App` and writes to the frame; the only
 //! state it touches is scroll offsets that keep the cursor visible.
 
+pub mod commit;
 pub mod diff;
 pub mod explorer;
 pub mod files;
@@ -8,7 +9,9 @@ pub mod glyphs;
 pub mod header;
 pub mod help;
 pub mod palette;
+pub mod prompt;
 pub mod settings;
+pub mod tabs;
 pub mod text;
 pub mod theme;
 pub mod timeline;
@@ -17,9 +20,26 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 
 use crate::app::App;
+use crate::workspace::Workspace;
 
 pub fn draw(f: &mut Frame, app: &mut App) {
+    draw_in(f, f.area(), app);
+}
+
+/// Several repositories: the tab bar, then the active one.
+pub fn draw_workspace(f: &mut Frame, ws: &mut Workspace) {
     let area = f.area();
+    if !ws.show_bar() {
+        draw_in(f, area, ws.active_app_mut());
+        return;
+    }
+    let [bar, rest] = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area);
+    tabs::draw(f, bar, ws);
+    draw_in(f, rest, ws.active_app_mut());
+}
+
+/// One repository's screens, in `area`.
+pub fn draw_in(f: &mut Frame, area: Rect, app: &mut App) {
     if app.diff.is_some() {
         diff::draw(f, area, app);
         diff::draw_drawer(f, area, app);
@@ -30,8 +50,18 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     if app.settings.is_some() {
         settings::draw(f, area, app);
     }
+    commit::draw(f, area, app);
+    commit::draw_push(f, area, app);
+    // A password prompt goes over everything.
+    prompt::draw(f, area, app);
     if app.help {
-        help::draw(f, area, app.diff.is_some(), app.glyphs().border);
+        help::draw(
+            f,
+            area,
+            app.diff.is_some(),
+            app.label.is_some(),
+            app.glyphs().border,
+        );
     }
 }
 

@@ -1,0 +1,28 @@
+---
+source: tests/workspace.rs
+expression: "h.render(80, 24)"
+---
+ 1 api ◌ 2 │ 2 svc │ 3 web 1                                             portal
+ feature/u┌ Keys · any key closes ───────────────────────────────────┐to review
+┌ Timeline│ Everywhere                                               │─────────┐
+│▸◌ Uncomm│   < > 1-9  previous / next repository · by number        │e  +1 -1 │
+│ ● 76fdc5│   q / esc  back · q on the main screen quits             │   +1    │
+│ ● f7c97f│   tab      switch panel                                  │   +1    │
+├─────────│   w / b    jump to uncommitted / branch total            │─────────┤
+│ Σ Branch│   u        oldest commit with unviewed files             │s  +3 -1 │
+└─────────│   n / p    newer / older commit                          │─────────┘
+┌ Files · │   i        branch total: toggle uncommitted changes      │─────────┐
+│▸  M  src│   m        merge: remerge-diff / first-parent            │   +1 -1 │
+│         │   c · P    commit · push (turn on git actions in settings│         │
+│         │   ctrl-l   refresh and redraw                            │         │
+│         │   , · ?    settings · this help                          │         │
+│         │                                                          │         │
+│         │ Timeline and files                                       │         │
+│         │   j / k    move                                          │         │
+│         │   g / G    top / bottom                                  │         │
+│         │   enter    timeline: files · files: open diff            │         │
+│         │   space    files: toggle viewed                          │         │
+│         │   r        toggle all files of the target viewed         │         │
+│         │   e        files: open in editor                         │         │
+└─────────│                                                          │─────────┘
+ enter fil└──────────────────────────────────────────────────────────┘ help

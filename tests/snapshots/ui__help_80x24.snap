@@ -1,18 +1,17 @@
 ---
 source: tests/ui.rs
-assertion_line: 84
 expression: "h.render(80, 24)"
 ---
- feature/inventory · main                                  ● live · 4 to review
-┌ Timeline┌ Keys · any key closes ───────────────────────────────────┐─────────┐
-│ ◌ Uncomm│ Everywhere                                               │   +4    │
-│ ● 8a9051│   q / esc  back · q on the main screen quits             │   +2 -1 │
-│▸◐ aa3185│   tab      switch panel                                  │   +7    │
-│ ● 3ddc35│   w / b    jump to uncommitted / branch total            │  +60    │
-│ ● 289a7a│   u        oldest commit with unviewed files             │   +3    │
-├─────────│   n / p    newer / older commit                          │─────────┤
-│ Σ Branch│   i        branch total: toggle uncommitted changes      │  +75    │
-└─────────│   m        merge: remerge-diff / first-parent            │─────────┘
+ feature/i┌ Keys · any key closes ───────────────────────────────────┐to review
+┌ Timeline│ Everywhere                                               │─────────┐
+│ ◌ Uncomm│   q / esc  back · q on the main screen quits             │   +4    │
+│ ● 8a9051│   tab      switch panel                                  │   +2 -1 │
+│▸◐ aa3185│   w / b    jump to uncommitted / branch total            │   +7    │
+│ ● 3ddc35│   u        oldest commit with unviewed files             │  +60    │
+│ ● 289a7a│   n / p    newer / older commit                          │   +3    │
+├─────────│   i        branch total: toggle uncommitted changes      │─────────┤
+│ Σ Branch│   m        merge: remerge-diff / first-parent            │  +75    │
+└─────────│   c · P    commit · push (turn on git actions in settings│─────────┘
 ┌ Files · │   ctrl-l   refresh and redraw                            │─────────┐
 │▸✓ A  ass│   , · ?    settings · this help                          │     +1  │
 │   A  src│                                                          │     +6  │

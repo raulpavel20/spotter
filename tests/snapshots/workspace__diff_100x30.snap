@@ -1,0 +1,34 @@
+---
+source: tests/workspace.rs
+expression: "h.render(100, 30)"
+---
+ 1 api ◌ 2 │ 2 svc │ 3 web ◌ 1                                                               portal
+ Uncommitted · index.html (1/1)                                                        ● 0/1 viewed
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ ▾   M index.html                                                                             +1 -1
+          @@ -1 +1 @@
+   1     - <h1>hello</h1>
+       1 + <p>a line that goes on and on, a line that goes on and on, a line that goes on and on, a
+         ↪ line that goes on and on, a line that goes on and on, </p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ ]/[ hunk · }/{ file · enter collapse · space viewed · f files · z no wrap · e edit · esc back

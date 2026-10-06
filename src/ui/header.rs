@@ -241,6 +241,15 @@ fn main_hints(app: &App) -> Vec<Hint> {
             h.push(hint("esc", "timeline", 3));
         }
     }
+    if app.config.git_actions {
+        if app.snap.as_ref().is_some_and(|s| !s.uncommitted.is_empty()) {
+            h.push(hint("c", "commit", 2));
+        }
+        h.push(hint("P", "push", 3));
+    }
+    if app.label.is_some() {
+        h.push(hint("< >", "repo", 3));
+    }
     h.push(hint(",", "settings", 3));
     h.push(hint("?", "help", 1));
     h

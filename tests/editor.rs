@@ -15,14 +15,14 @@ fn edit_request_uses_new_side_line_under_cursor() {
     let mut h = Harness::in_memory(&r);
     // header, hunk, ctx 1, ctx 2, -3, +three
     h.keys("j enter enter ] j j j j e");
-    let req = h.edits.pop().expect("editor request");
+    let req = h.rec.edits.pop().expect("editor request");
     assert_eq!(req.line, Some(3));
     assert_eq!(req.file.path, "a.txt");
     assert!(req.commit.is_some());
 
     // From the file list: the first changed line, found by the editor module.
     h.keys("q e");
-    let req = h.edits.pop().expect("editor request");
+    let req = h.rec.edits.pop().expect("editor request");
     assert_eq!(req.line, None);
     let repo = r.repo();
     let cfg = Config {
@@ -56,6 +56,6 @@ fn deleted_files_do_not_open() {
     r.commit("delete");
     let mut h = Harness::in_memory(&r);
     h.keys("j enter e");
-    assert!(h.edits.is_empty());
+    assert!(h.rec.edits.is_empty());
     assert!(h.app.toast.as_ref().unwrap().0.contains("deleted"));
 }

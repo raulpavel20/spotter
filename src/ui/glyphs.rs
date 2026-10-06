@@ -26,6 +26,9 @@ pub struct Glyphs {
     pub live: &'static str,
     pub polling: &'static str,
     pub error: &'static str,
+    /// More tabs off the edge of the tab bar.
+    pub more_left: &'static str,
+    pub more_right: &'static str,
     pub border: border::Set<'static>,
 }
 
@@ -46,6 +49,8 @@ pub const UNICODE: Glyphs = Glyphs {
     live: "●",
     polling: "◌",
     error: "✕",
+    more_left: "‹",
+    more_right: "›",
     border: border::PLAIN,
 };
 
@@ -66,6 +71,8 @@ pub const ASCII: Glyphs = Glyphs {
     live: "*",
     polling: "o",
     error: "x",
+    more_left: "<",
+    more_right: ">",
     border: border::Set {
         top_left: "+",
         top_right: "+",
@@ -102,6 +109,8 @@ mod tests {
             g.live,
             g.polling,
             g.error,
+            g.more_left,
+            g.more_right,
             g.border.top_left,
             g.border.horizontal_top,
             g.border.vertical_left,

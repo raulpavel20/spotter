@@ -50,13 +50,13 @@ fn context_lines_apply_live_and_save() {
     assert_eq!(h.app.config.context_lines, 5);
     assert_eq!(hunk_lines(&h), 5 + 2 + 5, "the open diff reloads");
     assert_eq!(
-        h.saved.last().unwrap(),
+        h.rec.saved.last().unwrap(),
         &("diff.context_lines", Some(Value::Int(5)))
     );
     // d resets to the default and removes the key from the file.
     h.keys("d");
     assert_eq!(h.app.config.context_lines, 3);
-    assert_eq!(h.saved.last().unwrap(), &("diff.context_lines", None));
+    assert_eq!(h.rec.saved.last().unwrap(), &("diff.context_lines", None));
     h.keys("esc");
     assert!(h.app.settings.is_none());
     assert!(h.app.diff.is_some(), "back to the diff");
@@ -88,7 +88,7 @@ fn git_config_overrides_win_but_still_save() {
     select(&mut h, "diff.context_lines");
     h.keys("l");
     assert_eq!(h.app.config.context_lines, 6, "git config still wins");
-    assert_eq!(h.saved.len(), 1);
+    assert_eq!(h.rec.saved.len(), 1);
     assert!(h.app.toast.as_ref().unwrap().0.contains("overrides"));
     let screen = h.render(100, 30);
     assert!(
@@ -103,7 +103,7 @@ fn text_settings_point_to_the_file() {
     let mut h = Harness::in_memory(&r);
     select(&mut h, "editor.command");
     h.keys("l");
-    assert!(h.saved.is_empty());
+    assert!(h.rec.saved.is_empty());
     assert!(h.app.toast.as_ref().unwrap().0.contains("press e"));
 }
 
@@ -168,7 +168,7 @@ fn wrap_setting_sets_the_start_and_wins_over_z() {
     assert!(h.app.config.wrap_lines);
     assert!(wrapped(&h));
     assert_eq!(
-        h.saved.last().unwrap(),
+        h.rec.saved.last().unwrap(),
         &("diff.wrap_lines", Some(Value::Bool(true)))
     );
 }
@@ -286,7 +286,7 @@ fn w_hides_whitespace_only_changes() {
     );
     assert!(h.render(100, 20).contains("only whitespace changes"));
     // Only for this session: nothing saved.
-    assert!(h.saved.is_empty());
+    assert!(h.rec.saved.is_empty());
     h.keys("W");
     assert!(
         !h.app.diff.as_ref().unwrap().patches[0]

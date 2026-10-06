@@ -19,7 +19,7 @@ use syntect::parsing::{SyntaxReference, SyntaxSet};
 use two_face::theme::{EmbeddedLazyThemeSet, EmbeddedThemeName};
 
 use crate::model::{FilePatch, LineKind};
-use crate::msg::Msg;
+use crate::msg::{self, Msg, TabId};
 use crate::ui::palette::Background;
 
 /// Longer lines are not highlighted.
@@ -198,6 +198,9 @@ pub enum HlMsg {
 /// and doubles as the cache key.
 #[derive(Debug, Clone)]
 pub struct HlRequest {
+    /// The repository's tab, when there are several.
+    pub tab: Option<TabId>,
+    /// The tab's diff generation: only its newest diff is highlighted.
     pub seq: u64,
     pub index: usize,
     pub key: String,
@@ -238,6 +241,17 @@ impl Cache {
     }
 }
 
+/// Only the newest diff of each tab matters. Tabs count their diffs
+/// separately, so one tab's requests never drop another's.
+fn keep_newest(queue: &mut VecDeque<HlRequest>) {
+    let mut newest: HashMap<Option<TabId>, u64> = HashMap::new();
+    for r in queue.iter() {
+        let n = newest.entry(r.tab).or_default();
+        *n = (*n).max(r.seq);
+    }
+    queue.retain(|r| newest.get(&r.tab) == Some(&r.seq));
+}
+
 fn run(mut theme: EmbeddedThemeName, rx: Receiver<HlMsg>, out: Sender<Msg>) {
     let mut hl: Option<Highlighter> = None;
     let mut cache = Cache {
@@ -267,9 +281,7 @@ fn run(mut theme: EmbeddedThemeName, rx: Receiver<HlMsg>, out: Sender<Msg>) {
                 }
             }
         }
-        // Only the newest diff matters.
-        let newest = queue.iter().map(|r| r.seq).max().unwrap_or(0);
-        queue.retain(|r| r.seq == newest);
+        keep_newest(&mut queue);
         let Some(req) = queue.pop_front() else {
             continue;
         };
@@ -287,7 +299,7 @@ fn run(mut theme: EmbeddedThemeName, rx: Receiver<HlMsg>, out: Sender<Msg>) {
             key: req.key,
             hl: result,
         };
-        if out.send(msg).is_err() {
+        if out.send(msg::tag(req.tab, msg)).is_err() {
             return;
         }
     }
@@ -312,6 +324,28 @@ mod tests {
     fn hl() -> &'static Highlighter {
         static HL: OnceLock<Highlighter> = OnceLock::new();
         HL.get_or_init(|| Highlighter::new(EmbeddedThemeName::MonokaiExtended))
+    }
+
+    #[test]
+    fn keeps_the_newest_diff_of_each_tab() {
+        let req = |tab: Option<u32>, seq: u64, key: &str| HlRequest {
+            tab: tab.map(TabId),
+            seq,
+            index: 0,
+            key: key.into(),
+            path: "a.rs".into(),
+            patch: FilePatch::default(),
+        };
+        let mut q: VecDeque<HlRequest> = [
+            req(Some(0), 1, "old"),
+            req(Some(1), 7, "other tab"),
+            req(Some(0), 2, "new"),
+            req(None, 3, "untagged"),
+        ]
+        .into();
+        keep_newest(&mut q);
+        let keys: Vec<&str> = q.iter().map(|r| r.key.as_str()).collect();
+        assert_eq!(keys, ["other tab", "new", "untagged"]);
     }
 
     #[test]
